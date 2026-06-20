@@ -71,6 +71,16 @@ class DatabaseManager:
                 cur.execute("SELECT subject_id, subject_name FROM Subjects ORDER BY subject_name")
                 return {name: sid for sid, name in cur.fetchall()}
 
+    def get_all_subjects_detailed(self):
+        """Fetch all subjects from database with all fields"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT subject_id, subject_name, subject_code, semester FROM Subjects ORDER BY subject_name")
+                return [
+                    {"id": row[0], "name": row[1], "code": row[2], "semester": row[3]}
+                    for row in cur.fetchall()
+                ]
+
     def register_student(self, prn, class_id, roll_no, name, email, face_encoding):
         """Register a new student with face encoding"""
         encoding_json = json.dumps(face_encoding.tolist())
@@ -100,6 +110,54 @@ class DatabaseManager:
                         return False, f"Roll number '{roll_no}' already exists in this class"
                     else:
                         return False, str(e)
+
+    def update_student(self, prn, class_id, roll_no, name, email, face_encoding=None):
+        """Update student information in the database"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    # Update details
+                    cur.execute("""
+                        UPDATE Students 
+                        SET class_id = %s, roll_no = %s, name = %s, email = %s
+                        WHERE prn_no = %s
+                    """, (class_id, int(roll_no), name, email, prn))
+                    
+                    # Update face encoding if provided
+                    if face_encoding is not None:
+                        encoding_json = json.dumps(face_encoding.tolist())
+                        # Delete old encoding and insert new one
+                        cur.execute("DELETE FROM FaceEncodings WHERE prn_no = %s", (prn,))
+                        cur.execute("""
+                            INSERT INTO FaceEncodings (prn_no, encoding_data)
+                            VALUES (%s, %s)
+                        """, (prn, encoding_json))
+                    
+                    conn.commit()
+                    return True, "Student details updated successfully"
+                except psycopg2.IntegrityError as e:
+                    conn.rollback()
+                    if "unique_roll_in_class" in str(e):
+                        return False, f"Roll number '{roll_no}' already exists in this class"
+                    elif "students_email_key" in str(e):
+                        return False, f"Email '{email}' already exists"
+                    else:
+                        return False, str(e)
+                except Exception as e:
+                    conn.rollback()
+                    return False, str(e)
+
+    def delete_student(self, prn):
+        """Delete a student and their face encoding from the database"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("DELETE FROM Students WHERE prn_no = %s", (prn,))
+                    conn.commit()
+                    return True, "Student deleted successfully"
+                except Exception as e:
+                    conn.rollback()
+                    return False, str(e)
 
     def get_all_face_encodings(self):
         """Fetch all face encodings from database (JSONB format for compatibility)"""
@@ -138,6 +196,22 @@ class DatabaseManager:
                 cur.execute("SELECT name FROM Students WHERE prn_no = %s", (prn_no,))
                 result = cur.fetchone()
                 return result[0] if result else None
+
+    def get_student_class_id(self, prn_no):
+        """Get student class ID by PRN"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT class_id FROM Students WHERE prn_no = %s", (prn_no,))
+                result = cur.fetchone()
+                return result[0] if result else None
+
+    def get_session_class_id(self, session_id):
+        """Get session class ID by session ID"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT class_id FROM Sessions WHERE session_id = %s", (session_id,))
+                result = cur.fetchone()
+                return result[0] if result else None
     def get_all_students(self):
         """Fetch all students"""
         with self.get_connection() as conn:
@@ -166,7 +240,7 @@ class DatabaseManager:
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT log_id, prn_no, subject_id, timestamp, status
+                    SELECT log_id, prn_no, subject_id, session_id, timestamp, presence_percentage, status
                     FROM AttendanceLog
                     ORDER BY timestamp DESC
                 """)
@@ -179,8 +253,10 @@ class DatabaseManager:
                         "log_id": row[0],
                         "prn": row[1],
                         "subject_id": row[2],
-                        "timestamp": str(row[3]),
-                        "status": row[4]
+                        "session_id": row[3],
+                        "timestamp": str(row[4]),
+                        "presence_percentage": row[5] if row[5] is not None else 0.0,
+                        "status": row[6]
                     })
 
                 return logs
@@ -342,6 +418,33 @@ class DatabaseManager:
                 
                 conn.commit()
                 return True, "Session ended and attendance processed successfully", results
+
+    def validate_user(self, username, password):
+        """Validate user credentials and return user details if successful"""
+        import hashlib
+        pass_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+        print(f"[DEBUG] validate_user input: username='{username}', password='{password}'")
+        print(f"[DEBUG] generated pass_hash='{pass_hash}'")
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT username, password_hash FROM Users")
+                all_users = cur.fetchall()
+                print(f"[DEBUG] all users in DB: {all_users}")
+                
+                cur.execute(
+                    "SELECT user_id, username, role, name FROM Users WHERE username = %s AND password_hash = %s",
+                    (username, pass_hash)
+                )
+                user = cur.fetchone()
+                print(f"[DEBUG] matched user row: {user}")
+                if user:
+                    return {
+                        "user_id": user[0],
+                        "username": user[1],
+                        "role": user[2],
+                        "name": user[3]
+                    }
+        return None
 
     def close(self):
         """Close all connections in the pool"""

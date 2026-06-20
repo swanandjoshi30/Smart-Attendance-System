@@ -23,13 +23,13 @@ DB_CONFIG = {
 }
 
 FACE_RECOGNITION_CONFIG = {
-    'use_yolo': True,
+    'use_yolo': False,
     'yolo_model': 'yolov8n.pt',
     'yolo_confidence': 0.3,
     'insightface_model': 'buffalo_l',
-    'det_thresh': 0.5,
+    'det_thresh': 0.6,
     'det_size': (640, 640),
-    'recognition_tolerance': 0.8,
+    'recognition_tolerance': 0.65,
     'detection_scale': 1.0,
 }
 

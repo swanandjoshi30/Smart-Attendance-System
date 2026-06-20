@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Class Attendance System</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Tailwind or Standard CSS? The user web application development instructions say:
+         "Use Vanilla CSS for maximum flexibility and control. Avoid using TailwindCSS unless the USER explicitly requests it."
+         So we will use a custom stylesheet style.css for max flexibility and ultimate design control. -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- 1. LOGIN OVERLAY -->
+    <div id="login-container" class="overlay-container active">
+        <div class="login-card glass">
+            <div class="logo">
+                <i class="fa-solid fa-graduation-cap"></i>
+                <h2>EduVision <span>v2.0</span></h2>
+            </div>
+            <h3>Sign in to Dashboard</h3>
+            <p class="subtitle">Enter your credential details to access features</p>
+            
+            <form id="login-form">
+                <div class="input-group">
+                    <label for="username"><i class="fa-solid fa-user"></i> Username</label>
+                    <input type="text" id="username" placeholder="e.g. teacher or admin" required>
+                </div>
+                <div class="input-group">
+                    <label for="password"><i class="fa-solid fa-lock"></i> Password</label>
+                    <input type="password" id="password" placeholder="••••••••" required>
+                </div>
+                <div id="login-error" class="error-msg hide">
+                    <i class="fa-solid fa-circle-exclamation"></i> Invalid credentials
+                </div>
+                <button type="submit" class="btn-primary">
+                    <span>Sign In</span> <i class="fa-solid fa-arrow-right-to-bracket"></i>
+                </button>
+            </form>
+            <div class="login-footer">
+                <p>Default Accounts: admin/admin123 or teacher/teacher123</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. MAIN APPLICATION -->
+    <div id="app-container" class="hide">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar glass">
+            <div class="sidebar-logo">
+                <i class="fa-solid fa-graduation-cap"></i>
+                <h2>EduVision</h2>
+            </div>
+            
+            <nav class="nav-menu">
+                <button class="nav-item active teacher-only" data-target="session-tab">
+                    <i class="fa-solid fa-video"></i> <span>Live Session</span>
+                </button>
+                <button class="nav-item admin-only" data-target="enroll-tab">
+                    <i class="fa-solid fa-user-plus"></i> <span>Enroll Student</span>
+                </button>
+                <button class="nav-item admin-only" data-target="manage-tab">
+                    <i class="fa-solid fa-users-gear"></i> <span>Manage Students</span>
+                </button>
+                <button class="nav-item" data-target="logs-tab">
+                    <i class="fa-solid fa-clock-rotate-left"></i> <span>Logs & Reports</span>
+                </button>
+            </nav>
+
+            <div class="user-profile">
+                <div class="avatar">
+                    <i class="fa-solid fa-user-tie"></i>
+                </div>
+                <div class="user-info">
+                    <h4 id="user-name">User Name</h4>
+                    <p id="user-role">Role</p>
+                </div>
+                <button id="logout-btn" title="Sign Out">
+                    <i class="fa-solid fa-power-off"></i>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header bar -->
+            <header class="top-header glass">
+                <div class="header-title">
+                    <h1 id="page-title">Classroom Session Tracking</h1>
+                    <p class="subtitle" id="page-subtitle">Real-time attendance scanning & presence calculation</p>
+                </div>
+                <div class="header-meta">
+                    <div class="time-widget glass">
+                        <i class="fa-regular fa-clock"></i>
+                        <span id="current-time">00:00:00 AM</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- TABS CONTAINER -->
+            <div class="tab-content-container">
+                
+                <!-- TAB: LIVE SESSION -->
+                <div id="session-tab" class="tab-pane active">
+                    <div class="session-grid">
+                        <!-- Left Panel: Video Feed -->
+                        <div class="feed-card glass">
+                            <div class="feed-header">
+                                <h3><i class="fa-solid fa-circle-notch fa-spin status-pulse text-danger"></i> Live Camera Feed</h3>
+                                <div class="session-status-pill" id="session-status-badge">Inactive</div>
+                            </div>
+                            
+                            <div class="video-wrapper">
+                                <video id="webcam" autoplay playsinline muted></video>
+                                <canvas id="canvas-overlay"></canvas>
+                                <div class="video-placeholder" id="video-placeholder">
+                                    <i class="fa-solid fa-video-slash"></i>
+                                    <p>Camera is currently offline</p>
+                                    <p class="sub">Start a classroom session to activate feed</p>
+                                </div>
+                            </div>
+
+                            <div class="feed-controls">
+                                <div class="selector-group">
+                                    <div class="selector-box">
+                                        <label for="class-select">Classroom</label>
+                                        <select id="class-select" class="glass-select">
+                                            <option value="">Select Class...</option>
+                                        </select>
+                                    </div>
+                                    <div class="selector-box">
+                                        <label for="semester-select">Semester</label>
+                                        <select id="semester-select" class="glass-select">
+                                            <option value="">Select Semester...</option>
+                                            <option value="1">Semester 1</option>
+                                            <option value="2">Semester 2</option>
+                                        </select>
+                                    </div>
+                                    <div class="selector-box">
+                                        <label for="subject-select">Subject / Lecture</label>
+                                        <select id="subject-select" class="glass-select">
+                                            <option value="">Select Subject...</option>
+                                        </select>
+                                    </div>
+                                    <div class="selector-box">
+                                        <label for="camera-select">Video Source</label>
+                                        <select id="camera-select" class="glass-select">
+                                            <option value="user">Default Web Camera</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="action-buttons">
+                                    <button id="start-session-btn" class="btn-success">
+                                        <i class="fa-solid fa-play"></i> Start Class Session
+                                    </button>
+                                    <button id="end-session-btn" class="btn-danger hide">
+                                        <i class="fa-solid fa-square"></i> End Class Session
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Panel: Live Stats and Logs -->
+                        <div class="stats-card-container">
+                            <div class="stats-overview">
+                                <div class="stat-card glass">
+                                    <span class="card-icon blue"><i class="fa-solid fa-users"></i></span>
+                                    <div class="card-data">
+                                        <p class="card-label">Class Total</p>
+                                        <h3 id="stat-total-students">0</h3>
+                                    </div>
+                                </div>
+                                <div class="stat-card glass">
+                                    <span class="card-icon green"><i class="fa-solid fa-user-check"></i></span>
+                                    <div class="card-data">
+                                        <p class="card-label">Students Present</p>
+                                        <h3 id="stat-present-count">0</h3>
+                                    </div>
+                                </div>
+                                <div class="stat-card glass">
+                                    <span class="card-icon orange"><i class="fa-solid fa-stopwatch"></i></span>
+                                    <div class="card-data">
+                                        <p class="card-label">Elapsed Time</p>
+                                        <h3 id="stat-elapsed-time">00:00:00</h3>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Live Roster logs -->
+                            <div class="roster-card glass">
+                                <div class="card-header">
+                                    <h3>👥 Live Present Roster</h3>
+                                    <span class="badge" id="roster-count-badge">0 Seen</span>
+                                </div>
+                                <div class="roster-list-wrapper">
+                                    <table class="roster-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Roll No</th>
+                                                <th>Name</th>
+                                                <th>PRN</th>
+                                                <th>Last Seen</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="live-roster-body">
+                                            <tr class="empty-row">
+                                                <td colspan="4">No students detected yet in this session.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB: STUDENT ENROLLMENT (ADMIN ONLY) -->
+                <div id="enroll-tab" class="tab-pane">
+                    <div class="enrollment-grid">
+                        <div class="enroll-form-card glass">
+                            <h3><i class="fa-solid fa-id-card"></i> Student Information</h3>
+                            <form id="enrollment-form">
+                                <div class="form-row">
+                                    <div class="input-group">
+                                        <label for="enroll-prn">PRN Number (Unique ID)</label>
+                                        <input type="text" id="enroll-prn" placeholder="e.g. 72345678X" required>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="enroll-class">Classroom Allocation</label>
+                                        <select id="enroll-class" class="glass-select" required>
+                                            <option value="">Select Class...</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="input-group">
+                                        <label for="enroll-name">Full Name</label>
+                                        <input type="text" id="enroll-name" placeholder="John Doe" required>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="enroll-roll">Roll Number</label>
+                                        <input type="number" id="enroll-roll" placeholder="e.g. 101" required>
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <label for="enroll-email">Email Address</label>
+                                    <input type="email" id="enroll-email" placeholder="john.doe@college.edu" required>
+                                </div>
+                                
+                                <button type="submit" class="btn-primary" id="btn-submit-enroll">
+                                    <i class="fa-solid fa-user-plus"></i> Complete Enrollment
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Right Photo Capture Section -->
+                        <div class="photo-capture-card glass">
+                            <h3><i class="fa-solid fa-camera"></i> Face Capture Template</h3>
+                            <p class="instruction">Position student's face inside the camera view below.</p>
+                            
+                            <div class="capture-box">
+                                <video id="enroll-video" autoplay playsinline muted></video>
+                                <canvas id="enroll-canvas" class="hide"></canvas>
+                                <img id="captured-img" class="hide" src="" alt="Captured Face">
+                                <div class="face-guideline"></div>
+                            </div>
+                            
+                            <div class="capture-controls">
+                                <button type="button" id="btn-capture" class="btn-secondary">
+                                    <i class="fa-solid fa-aperture"></i> Capture Photo
+                                </button>
+                                <button type="button" id="btn-retake" class="btn-secondary hide">
+                                    <i class="fa-solid fa-rotate-left"></i> Retake Photo
+                                </button>
+                            </div>
+                            
+                            <div id="quality-alert" class="alert-box hide">
+                                <span id="quality-msg">Checking face quality...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB: MANAGE STUDENTS (ADMIN ONLY) -->
+                <div id="manage-tab" class="tab-pane">
+                    <div class="reports-container glass">
+                        <div class="reports-header">
+                            <h3><i class="fa-solid fa-users-gear"></i> Enrolled Students Directory</h3>
+                            <div class="filter-controls">
+                                <input type="text" id="student-search" placeholder="Search by name, roll, or PRN..." class="glass-input">
+                            </div>
+                        </div>
+                        <div class="report-table-wrapper">
+                            <table class="report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Roll No</th>
+                                        <th>Name</th>
+                                        <th>PRN</th>
+                                        <th>Classroom</th>
+                                        <th>Email</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="student-list-body">
+                                    <tr>
+                                        <td colspan="6" class="center">Loading students list...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB: LOGS & REPORTS -->
+                <div id="logs-tab" class="tab-pane">
+                    <div class="logs-layout-container" style="display: grid; grid-template-columns: 320px 1fr; gap: 20px; height: 100%; overflow: hidden;">
+                        <!-- Left Sidebar: Class -> Sem -> Subject Tree -->
+                        <div class="logs-sidebar glass" style="padding: 20px; display: flex; flex-direction: column; overflow-y: auto;">
+                            <h3 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;"><i class="fa-solid fa-folder-open"></i> Academic Archive</h3>
+                            <div id="logs-tree" class="logs-tree-root" style="display: flex; flex-direction: column; gap: 10px;">
+                                <!-- Dynamic tree will be generated here -->
+                            </div>
+                        </div>
+                        <!-- Right Panel: Attendance Content -->
+                        <div class="logs-content glass" style="padding: 25px; display: flex; flex-direction: column; overflow: hidden; height: 100%;">
+                            <div id="logs-placeholder" class="logs-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-secondary); gap: 15px;">
+                                <i class="fa-solid fa-file-circle-question" style="font-size: 3.5rem; opacity: 0.2;"></i>
+                                <p>Select a subject from the sidebar to view attendance reports.</p>
+                            </div>
+                            <div id="logs-report-view" class="hide" style="display: flex; flex-direction: column; height: 100%;">
+                                <div class="report-view-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">
+                                    <h3 id="report-title-subject" style="font-size: 1.25rem; font-weight: 700;">Subject Attendance</h3>
+                                    <span id="report-title-class" class="report-subtitle" style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-top: 4px;">Class Name</span>
+                                </div>
+                                
+                                <div class="report-selection-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                                    <div class="select-wrapper" style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem;">
+                                        <label for="report-session-select">Select Session:</label>
+                                        <select id="report-session-select" class="glass-select" style="padding: 8px 14px;">
+                                            <option value="cumulative">Cumulative Summary</option>
+                                            <!-- Dynamic sessions list -->
+                                        </select>
+                                    </div>
+                                    <div style="display: flex; gap: 10px; align-items: center;">
+                                        <input type="text" id="report-search" placeholder="Search student name/PRN..." class="glass-input" style="padding: 6px 12px; font-size: 0.85rem; width: 200px;">
+                                        <button class="btn-success btn-sm" id="btn-export-log-csv" style="padding: 8px 14px !important; font-size: 0.8rem !important;">
+                                            <i class="fa-solid fa-file-csv"></i> Export to CSV
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <div class="report-table-wrapper" style="flex-grow: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 12px;">
+                                    <table class="report-table">
+                                        <thead id="report-table-thead">
+                                            <!-- Dynamic headers -->
+                                        </thead>
+                                        <tbody id="report-table-tbody">
+                                            <!-- Dynamic rows -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- 3. ATTENDANCE RESULTS MODAL -->
+    <div id="results-modal" class="modal-container hide">
+        <div class="modal-card glass">
+            <div class="modal-header">
+                <h2>📝 Session Attendance Report</h2>
+                <button class="close-modal-btn" id="close-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <p class="session-info-meta">
+                    Session complete. Calculated student statuses using the <strong>70% presence rule</strong>.
+                </p>
+                
+                <div class="results-table-wrapper">
+                    <table class="results-table">
+                        <thead>
+                            <tr>
+                                <th>Roll No</th>
+                                <th>Name</th>
+                                <th>PRN</th>
+                                <th>Presence %</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-tbody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="results-footer-meta">
+                    <div class="results-stats">
+                        Total Registered: <span id="res-total-reg">0</span> | 
+                        Present (>=70%): <span id="res-total-present" class="text-success">0</span>
+                    </div>
+                    <button class="btn-success" id="btn-download-csv">
+                        <i class="fa-solid fa-file-csv"></i> Export Present List to CSV
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. EDIT STUDENT MODAL -->
+    <div id="edit-student-modal" class="modal-container hide">
+        <div class="modal-card glass">
+            <div class="modal-header">
+                <h2>✏️ Edit Student Profile</h2>
+                <button class="close-modal-btn" id="close-edit-modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-student-form">
+                    <div class="form-row">
+                        <div class="input-group">
+                            <label>PRN Number (Immutable)</label>
+                            <input type="text" id="edit-prn" disabled class="disabled-input">
+                        </div>
+                        <div class="input-group">
+                            <label for="edit-class">Classroom</label>
+                            <select id="edit-class" class="glass-select" required></select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="input-group">
+                            <label for="edit-name">Full Name</label>
+                            <input type="text" id="edit-name" required>
+                        </div>
+                        <div class="input-group">
+                            <label for="edit-roll">Roll Number</label>
+                            <input type="number" id="edit-roll" required>
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <label for="edit-email">Email Address</label>
+                        <input type="email" id="edit-email" required>
+                    </div>
+
+                    <!-- Webcam override capture -->
+                    <div class="edit-photo-section">
+                        <label>Update Face Template (Optional)</label>
+                        <div class="edit-capture-container">
+                            <div class="capture-box small-capture">
+                                <video id="edit-video" autoplay playsinline muted class="hide"></video>
+                                <canvas id="edit-canvas" class="hide"></canvas>
+                                <img id="edit-captured-img" class="hide" src="" alt="New Face">
+                                <div class="face-guideline small-guideline hide"></div>
+                                <div class="placeholder-text" id="edit-photo-placeholder">
+                                    <i class="fa-solid fa-user-circle"></i>
+                                    <p>No new photo captured</p>
+                                </div>
+                            </div>
+                            <div class="capture-btn-group">
+                                <button type="button" id="btn-edit-activate-cam" class="btn-secondary btn-sm">
+                                    <i class="fa-solid fa-camera"></i> Open Camera
+                                </button>
+                                <button type="button" id="btn-edit-capture" class="btn-success btn-sm hide">
+                                    <i class="fa-solid fa-aperture"></i> Capture
+                                </button>
+                                <button type="button" id="btn-edit-retake" class="btn-secondary btn-sm hide">
+                                    <i class="fa-solid fa-rotate-left"></i> Retake
+                                </button>
+                            </div>
+                        </div>
+                        <div id="edit-quality-alert" class="alert-box hide">
+                            <span id="edit-quality-msg">Checking face quality...</span>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn-primary" id="btn-submit-edit" style="width: 100%; margin-top: 20px;">
+                        <i class="fa-solid fa-save"></i> Save Profile Changes
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

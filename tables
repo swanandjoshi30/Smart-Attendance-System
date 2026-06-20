@@ -61,6 +61,23 @@ CREATE TABLE IF NOT EXISTS AttendanceLog (
     status VARCHAR(20) DEFAULT 'absent'
 );
 
+-- Users table for authentication
+CREATE TABLE IF NOT EXISTS Users (
+    user_id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'teacher', -- 'admin', 'teacher'
+    name VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seed default users
+INSERT INTO Users (username, password_hash, role, name) VALUES
+('admin', '240a8e3ee407d8879820324c4e2222d99bc57839ad7aae37d1213f173f0bcf6f', 'admin', 'System Administrator'),
+('teacher', '785d1d6467362df5a3c9e6f21226b772c575005b4a530f2d9ef4fb1e680a6b7d', 'teacher', 'Classroom Teacher')
+ON CONFLICT (username) DO NOTHING;
+
+
 -- Alter existing tables if they already exist
 ALTER TABLE AttendanceLog ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES Sessions(session_id) ON DELETE CASCADE;
 ALTER TABLE AttendanceLog ADD COLUMN IF NOT EXISTS presence_percentage FLOAT DEFAULT 0.0;
