@@ -103,3 +103,19 @@ INSERT INTO Classes (class_name) VALUES
     ('Computer Science - COMP 2'),
     ('Computer Science - COMP 3')
 ON CONFLICT (class_name) DO NOTHING;
+
+-- Cameras table
+CREATE TABLE IF NOT EXISTS Cameras (
+    camera_id SERIAL PRIMARY KEY,
+    camera_name VARCHAR(100) UNIQUE NOT NULL,
+    rtsp_url VARCHAR(255),
+    direction VARCHAR(10) NOT NULL DEFAULT 'BOTH' CHECK (direction IN ('IN', 'OUT', 'BOTH')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seed default cameras
+INSERT INTO Cameras (camera_name, rtsp_url, direction) VALUES
+('Entrance Main Door', 'rtsp://192.168.1.100/live', 'IN'),
+('Exit Main Door', 'rtsp://192.168.1.101/live', 'OUT'),
+('Classroom 101 Dome', 'rtsp://192.168.1.102/live', 'BOTH')
+ON CONFLICT (camera_name) DO NOTHING;

@@ -23,16 +23,16 @@ class DatabaseManager:
                 password=config['password'],
                 port=config.get('port', 5432)
             )
-            print("✓ Database connection pool created successfully")
+            print("[OK] Database connection pool created successfully")
             self.initialize_schema()
         except Exception as e:
-            print(f"✗ Failed to create connection pool: {e}")
+            print(f"[ERROR] Failed to create connection pool: {e}")
             raise
 
     def initialize_schema(self):
         """Create the prototype schema and seed data when needed."""
         if not self.schema_path.exists():
-            print(f"⚠ Schema file not found: {self.schema_path}")
+            print(f"[WARN] Schema file not found: {self.schema_path}")
             return
 
         schema_sql = self.schema_path.read_text(encoding='utf-8')
@@ -42,7 +42,7 @@ class DatabaseManager:
                 cur.execute(schema_sql)
             conn.commit()
 
-        print("✓ Prototype database schema verified")
+        print("[OK] Prototype database schema verified")
 
     @contextmanager
     def get_connection(self):
@@ -446,7 +446,188 @@ class DatabaseManager:
                     }
         return None
 
+    def get_class_cumulative_attendance(self, class_id, subject_id):
+        """Get cumulative attendance for all students enrolled in a class for a specific subject."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Get all students in class
+                cur.execute("SELECT prn_no, name, email FROM Students WHERE class_id = %s", (class_id,))
+                students = cur.fetchall()
+                
+                # Total sessions
+                cur.execute("SELECT COUNT(DISTINCT session_id) FROM AttendanceLog WHERE subject_id = %s", (subject_id,))
+                total_sessions = cur.fetchone()[0] or 0
+                
+                results = []
+                if total_sessions == 0:
+                    for prn, name, email in students:
+                        results.append({
+                            "prn": prn,
+                            "name": name,
+                            "email": email,
+                            "attendance_percentage": 100.0
+                        })
+                    return results
+                
+                # Sessions attended for each student
+                cur.execute("""
+                    SELECT prn_no, COUNT(*) 
+                    FROM AttendanceLog 
+                    WHERE subject_id = %s AND status = 'present' 
+                    GROUP BY prn_no
+                """, (subject_id,))
+                attended_map = dict(cur.fetchall())
+                
+                for prn, name, email in students:
+                    attended = attended_map.get(prn, 0)
+                    pct = float((attended / total_sessions) * 100.0)
+                    results.append({
+                        "prn": prn,
+                        "name": name,
+                        "email": email,
+                        "attendance_percentage": pct
+                    })
+                return results
+
+    def get_class_attendance_stats(self):
+        """Calculates average attendance percentage per class."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT c.class_id, c.class_name, 
+                           COALESCE(AVG(al.presence_percentage), 0.0) as avg_attendance
+                    FROM Classes c
+                    LEFT JOIN Students s ON c.class_id = s.class_id
+                    LEFT JOIN AttendanceLog al ON s.prn_no = al.prn_no
+                    GROUP BY c.class_id, c.class_name
+                    ORDER BY c.class_name
+                """)
+                return [
+                    {"class_id": row[0], "class_name": row[1], "avg_attendance": float(row[2])}
+                    for row in cur.fetchall()
+                ]
+
+    def get_attendance_trends(self):
+        """Retrieves date-wise presence rates (percentage of present students over total logged)."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DATE(timestamp) as log_date,
+                           COUNT(CASE WHEN status = 'present' THEN 1 END) as present_count,
+                           COUNT(*) as total_count
+                  FROM AttendanceLog
+                  GROUP BY DATE(timestamp)
+                  ORDER BY log_date
+              """)
+                trends = []
+                for row in cur.fetchall():
+                    log_date, present, total = row
+                    presence_rate = float((present / total) * 100.0) if total > 0 else 0.0
+                    trends.append({
+                        "date": str(log_date),
+                        "presence_rate": presence_rate
+                    })
+                return trends
+
+    def override_attendance(self, session_id, prn, status):
+        """Manually override a student's attendance status for a specific session."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # 1. Get subject_id from session
+                cur.execute("SELECT subject_id FROM Sessions WHERE session_id = %s", (session_id,))
+                row = cur.fetchone()
+                if not row:
+                    return False, "Session not found"
+                subject_id = row[0]
+                
+                # 2. Check if log entry exists
+                cur.execute("""
+                    SELECT log_id FROM AttendanceLog 
+                    WHERE session_id = %s AND prn_no = %s
+                """, (session_id, prn))
+                log_row = cur.fetchone()
+                
+                presence_pct = 100.0 if status == 'present' else 0.0
+                
+                if log_row:
+                    # Update
+                    cur.execute("""
+                        UPDATE AttendanceLog 
+                        SET status = %s, presence_percentage = %s 
+                        WHERE log_id = %s
+                    """, (status, presence_pct, log_row[0]))
+                else:
+                    # Insert
+                    cur.execute("""
+                        INSERT INTO AttendanceLog (prn_no, subject_id, session_id, presence_percentage, status)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (prn, subject_id, session_id, presence_pct, status))
+                conn.commit()
+                return True, f"Successfully marked student {prn} as {status} for session {session_id}"
+
+    def get_all_cameras(self):
+        """Fetch all cameras from database"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT camera_id, camera_name, rtsp_url, direction FROM Cameras ORDER BY camera_id")
+                return [
+                    {"camera_id": row[0], "camera_name": row[1], "rtsp_url": row[2], "direction": row[3]}
+                    for row in cur.fetchall()
+                ]
+
+    def add_camera(self, name, rtsp_url, direction):
+        """Add a new camera to database"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        "INSERT INTO Cameras (camera_name, rtsp_url, direction) VALUES (%s, %s, %s) RETURNING camera_id",
+                        (name, rtsp_url, direction)
+                    )
+                    camera_id = cur.fetchone()[0]
+                    conn.commit()
+                    return True, "Camera added successfully", camera_id
+                except psycopg2.IntegrityError as e:
+                    conn.rollback()
+                    if "cameras_camera_name_key" in str(e):
+                        return False, f"Camera name '{name}' already exists", None
+                    return False, str(e), None
+
+    def update_camera(self, camera_id, name, rtsp_url, direction):
+        """Update an existing camera in database"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("""
+                        UPDATE Cameras 
+                        SET camera_name = %s, rtsp_url = %s, direction = %s
+                        WHERE camera_id = %s
+                    """, (name, rtsp_url, direction, camera_id))
+                    conn.commit()
+                    return True, "Camera updated successfully"
+                except psycopg2.IntegrityError as e:
+                    conn.rollback()
+                    if "cameras_camera_name_key" in str(e):
+                        return False, f"Camera name '{name}' already exists"
+                    return False, str(e)
+                except Exception as e:
+                    conn.rollback()
+                    return False, str(e)
+
+    def delete_camera(self, camera_id):
+        """Delete a camera from database"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("DELETE FROM Cameras WHERE camera_id = %s", (camera_id,))
+                    conn.commit()
+                    return True, "Camera deleted successfully"
+                except Exception as e:
+                    conn.rollback()
+                    return False, str(e)
+
     def close(self):
         """Close all connections in the pool"""
         self.connection_pool.closeall()
+
 
