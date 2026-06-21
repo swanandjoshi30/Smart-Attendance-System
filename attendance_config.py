@@ -31,16 +31,6 @@ FACE_RECOGNITION_CONFIG = {
     'det_size': (640, 640),
     'recognition_tolerance': 0.65,
     'detection_scale': 1.0,
-    'use_cosine_similarity': True,
-    'cosine_threshold': 0.45,
-}
-
-SMTP_CONFIG = {
-    'host': os.getenv('SMTP_HOST', ''),
-    'port': int(os.getenv('SMTP_PORT', '587')),
-    'user': os.getenv('SMTP_USER', ''),
-    'password': os.getenv('SMTP_PASSWORD', ''),
-    'from_addr': os.getenv('SMTP_FROM_ADDR', 'no-reply@smartattendance.edu'),
 }
 
 ATTENDANCE_COOLDOWN = 300
