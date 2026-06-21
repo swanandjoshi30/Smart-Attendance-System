@@ -161,47 +161,20 @@ class FaceRecognitionEngine:
                 return [(None, 0.0) for _ in face_encodings]
 
             known_stack = np.vstack(self.known_embeddings)
-            use_cosine = self.config.get('use_cosine_similarity', True)
+            threshold = float(self.config.get('recognition_tolerance', 0.8))
 
-            if use_cosine:
-                cosine_threshold = float(self.config.get('cosine_threshold', 0.45))
-                for face_encoding in face_encodings:
-                    query = self._normalize_embedding(np.asarray(face_encoding, dtype=np.float32))
-                    similarities = np.dot(known_stack, query)
-                    best_idx = int(np.argmax(similarities))
-                    best_sim = float(similarities[best_idx])
+            for face_encoding in face_encodings:
+                query = self._normalize_embedding(np.asarray(face_encoding, dtype=np.float32))
+                distances = np.linalg.norm(known_stack - query, axis=1)
+                best_idx = int(np.argmin(distances))
+                best_dist = float(distances[best_idx])
 
-                    if best_sim < cosine_threshold:
-                        if cosine_threshold > 0:
-                            confidence = max(0.0, (best_sim / cosine_threshold) * 70.0)
-                        else:
-                            confidence = 0.0
-                    else:
-                        if 1.0 - cosine_threshold > 0:
-                            confidence = 70.0 + ((best_sim - cosine_threshold) / (1.0 - cosine_threshold)) * 30.0
-                        else:
-                            confidence = 100.0
-                    confidence = max(0.0, min(100.0, confidence))
-
-                    if best_sim >= cosine_threshold:
-                        prn = self.known_prns[best_idx]
-                        results.append((prn, confidence))
-                    else:
-                        results.append((None, confidence))
-            else:
-                threshold = float(self.config.get('recognition_tolerance', 0.8))
-                for face_encoding in face_encodings:
-                    query = self._normalize_embedding(np.asarray(face_encoding, dtype=np.float32))
-                    distances = np.linalg.norm(known_stack - query, axis=1)
-                    best_idx = int(np.argmin(distances))
-                    best_dist = float(distances[best_idx])
-
-                    confidence = max(0.0, min(100.0, (1.2 - best_dist) / 1.2 * 100))
-                    if best_dist <= threshold:
-                        prn = self.known_prns[best_idx]
-                        results.append((prn, confidence))
-                    else:
-                        results.append((None, confidence))
+                confidence = max(0.0, min(100.0, (1.2 - best_dist) / 1.2 * 100))
+                if best_dist <= threshold:
+                    prn = self.known_prns[best_idx]
+                    results.append((prn, confidence))
+                else:
+                    results.append((None, confidence))
 
         return results
 
