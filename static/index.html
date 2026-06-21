@@ -12,6 +12,8 @@
          "Use Vanilla CSS for maximum flexibility and control. Avoid using TailwindCSS unless the USER explicitly requests it."
          So we will use a custom stylesheet style.css for max flexibility and ultimate design control. -->
     <link rel="stylesheet" href="style.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -66,8 +68,14 @@
                 <button class="nav-item admin-only" data-target="manage-tab">
                     <i class="fa-solid fa-users-gear"></i> <span>Manage Students</span>
                 </button>
+                <button class="nav-item admin-only" data-target="cameras-tab">
+                    <i class="fa-solid fa-camera"></i> <span>Manage Cameras</span>
+                </button>
                 <button class="nav-item" data-target="logs-tab">
                     <i class="fa-solid fa-clock-rotate-left"></i> <span>Logs & Reports</span>
+                </button>
+                <button class="nav-item" data-target="analytics-tab">
+                    <i class="fa-solid fa-chart-line"></i> <span>Analytics</span>
                 </button>
             </nav>
 
@@ -269,17 +277,70 @@
                                 <div class="face-guideline"></div>
                             </div>
                             
-                            <div class="capture-controls">
-                                <button type="button" id="btn-capture" class="btn-secondary">
+                            <div class="capture-controls" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                                <button type="button" id="btn-capture" class="btn-secondary" style="flex: 1; min-width: 120px;">
                                     <i class="fa-solid fa-aperture"></i> Capture Photo
                                 </button>
-                                <button type="button" id="btn-retake" class="btn-secondary hide">
+                                <button type="button" id="btn-retake" class="btn-secondary hide" style="flex: 1; min-width: 120px;">
                                     <i class="fa-solid fa-rotate-left"></i> Retake Photo
                                 </button>
+                                <button type="button" class="btn-secondary" id="btn-upload-trigger" style="flex: 1; min-width: 120px;">
+                                    <i class="fa-solid fa-upload"></i> Upload Photo
+                                </button>
+                                <input type="file" id="enroll-file" accept="image/*" style="display: none;">
                             </div>
                             
                             <div id="quality-alert" class="alert-box hide">
                                 <span id="quality-msg">Checking face quality...</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Bulk Registration Operations -->
+                    <div class="bulk-import-section glass" style="margin-top: 25px; padding: 25px; border-radius: 16px;">
+                        <h3 style="margin-bottom: 12px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                            <i class="fa-solid fa-file-import"></i> Bulk Registration
+                        </h3>
+                        <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 20px;">
+                            Upload CSV files to register multiple students or subjects at once. 
+                            Students registered in bulk will not have face templates initially; these can be added later by editing their profiles.
+                        </p>
+                        
+                        <div class="bulk-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                            <!-- Bulk Students -->
+                            <div class="bulk-card glass" style="padding: 20px; border-radius: 12px; background: rgba(255,255,255,0.02);">
+                                <h4 style="margin-bottom: 10px; font-weight: 600;"><i class="fa-solid fa-users"></i> Import Students</h4>
+                                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 15px;">
+                                    CSV template format: <code>prn, class_id, roll_no, name, email</code>
+                                </p>
+                                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                                    <button type="button" class="btn-secondary btn-sm" id="btn-download-student-template" style="padding: 8px 14px; font-size: 0.8rem;">
+                                        <i class="fa-solid fa-download"></i> Template
+                                    </button>
+                                    <button type="button" class="btn-primary btn-sm" id="btn-import-students-trigger" style="padding: 8px 14px; font-size: 0.8rem;">
+                                        <i class="fa-solid fa-file-csv"></i> Select CSV & Import
+                                    </button>
+                                    <input type="file" id="import-students-file" accept=".csv" style="display: none;">
+                                </div>
+                                <div id="import-students-status" class="error-msg hide" style="margin-top: 15px; padding: 10px;"></div>
+                            </div>
+                            
+                            <!-- Bulk Subjects -->
+                            <div class="bulk-card glass" style="padding: 20px; border-radius: 12px; background: rgba(255,255,255,0.02);">
+                                <h4 style="margin-bottom: 10px; font-weight: 600;"><i class="fa-solid fa-book"></i> Import Subjects</h4>
+                                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 15px;">
+                                    CSV template format: <code>subject_code, subject_name, class_id, semester</code>
+                                </p>
+                                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                                    <button type="button" class="btn-secondary btn-sm" id="btn-download-subject-template" style="padding: 8px 14px; font-size: 0.8rem;">
+                                        <i class="fa-solid fa-download"></i> Template
+                                    </button>
+                                    <button type="button" class="btn-primary btn-sm" id="btn-import-subjects-trigger" style="padding: 8px 14px; font-size: 0.8rem;">
+                                        <i class="fa-solid fa-file-csv"></i> Select CSV & Import
+                                    </button>
+                                    <input type="file" id="import-subjects-file" accept=".csv" style="display: none;">
+                                </div>
+                                <div id="import-subjects-status" class="error-msg hide" style="margin-top: 15px; padding: 10px;"></div>
                             </div>
                         </div>
                     </div>
@@ -369,7 +430,95 @@
                     </div>
                 </div>
 
-            </div>
+                <!-- TAB: ANALYTICS -->
+                <div id="analytics-tab" class="tab-pane">
+                    <div class="analytics-container glass" style="padding: 25px; display: flex; flex-direction: column; gap: 20px; height: 100%; overflow-y: auto;">
+                        <div class="analytics-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 10px;">
+                            <h3 style="font-size: 1.25rem; font-weight: 700;"><i class="fa-solid fa-chart-pie"></i> Attendance Analytics</h3>
+                            <p class="subtitle" style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px;">Visual trends, performance metrics and classroom insights</p>
+                        </div>
+                        <div class="charts-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(450px, 1fr)); gap: 25px;">
+                            <div class="chart-card glass" style="padding: 20px; border-radius: 12px; background: rgba(255, 255, 255, 0.03);">
+                                <h4 style="margin-bottom: 15px; font-weight: 600;"><i class="fa-solid fa-chart-bar"></i> Class-wise Average Attendance</h4>
+                                <div style="position: relative; height: 320px;">
+                                    <canvas id="classAttendanceChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="chart-card glass" style="padding: 20px; border-radius: 12px; background: rgba(255, 255, 255, 0.03);">
+                                <h4 style="margin-bottom: 15px; font-weight: 600;"><i class="fa-solid fa-chart-line"></i> Attendance Rates Over Time</h4>
+                                <div style="position: relative; height: 320px;">
+                                    <canvas id="attendanceTrendChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB: MANAGE CAMERAS (ADMIN ONLY) -->
+                <div id="cameras-tab" class="tab-pane">
+                    <div class="cameras-layout-container" style="display: grid; grid-template-columns: 320px 1fr; gap: 20px; height: 100%; overflow: hidden; padding: 10px;">
+                        <!-- Left Side: Camera Form -->
+                        <div class="camera-form-card glass" style="padding: 20px; display: flex; flex-direction: column; overflow-y: auto;">
+                            <h3 id="camera-form-title" style="font-size: 1.15rem; font-weight: 600; margin-bottom: 20px; display: flex; align-items: center; gap: 8px;">
+                                <i class="fa-solid fa-circle-plus"></i> Add New Camera
+                            </h3>
+                            <form id="camera-form" style="display: flex; flex-direction: column; gap: 15px;">
+                                <input type="hidden" id="camera-id" value="">
+                                <div class="input-group">
+                                    <label for="camera-name-input">Camera Location / Name</label>
+                                    <input type="text" id="camera-name-input" placeholder="e.g. Entrance Main Door" required class="glass-input">
+                                </div>
+                                <div class="input-group">
+                                    <label for="camera-rtsp-input">RTSP Connection URL</label>
+                                    <input type="text" id="camera-rtsp-input" placeholder="e.g. rtsp://192.168.1.100/live" required class="glass-input">
+                                </div>
+                                <div class="input-group">
+                                    <label for="camera-direction-select">Assigned Direction</label>
+                                    <select id="camera-direction-select" class="glass-select" style="width: 100%;" required>
+                                        <option value="BOTH">BOTH (Entry & Exit)</option>
+                                        <option value="IN">IN (Entry gate)</option>
+                                        <option value="OUT">OUT (Exit gate)</option>
+                                    </select>
+                                </div>
+                                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                                    <button type="button" id="btn-camera-cancel" class="btn-secondary hide" style="flex: 1; padding: 10px; font-size: 0.9rem;">
+                                        Cancel
+                                    </button>
+                                    <button type="submit" id="btn-camera-submit" class="btn-primary" style="flex: 2; padding: 10px; font-size: 0.9rem;">
+                                        Save Camera
+                                    </button>
+                                </div>
+                            </form>
+                            <div id="camera-status-msg" class="error-msg hide" style="margin-top: 15px; padding: 10px;"></div>
+                        </div>
+                        <!-- Right Side: Camera List Table -->
+                        <div class="camera-list-card glass" style="padding: 20px; display: flex; flex-direction: column; overflow: hidden; height: 100%;">
+                            <h3 style="font-size: 1.15rem; font-weight: 600; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+                                <i class="fa-solid fa-video"></i> Configured CCTV Camera Sources
+                            </h3>
+                            <div class="report-table-wrapper" style="flex-grow: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 12px;">
+                                <table class="report-table" id="camera-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Camera ID</th>
+                                            <th>Name / Location</th>
+                                            <th>RTSP Connection URL</th>
+                                            <th>Direction</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="camera-list-body">
+                                        <tr>
+                                            <td colspan="5" class="center">Loading CCTV cameras directory...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+ 
+             </div>
         </main>
     </div>
 
@@ -463,9 +612,9 @@
                                     <p>No new photo captured</p>
                                 </div>
                             </div>
-                            <div class="capture-btn-group">
+                            <div class="capture-btn-group" style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px;">
                                 <button type="button" id="btn-edit-activate-cam" class="btn-secondary btn-sm">
-                                    <i class="fa-solid fa-camera"></i> Open Camera
+                                    <i class="fa-solid fa-camera"></i> Camera
                                 </button>
                                 <button type="button" id="btn-edit-capture" class="btn-success btn-sm hide">
                                     <i class="fa-solid fa-aperture"></i> Capture
@@ -473,6 +622,10 @@
                                 <button type="button" id="btn-edit-retake" class="btn-secondary btn-sm hide">
                                     <i class="fa-solid fa-rotate-left"></i> Retake
                                 </button>
+                                <button type="button" class="btn-secondary btn-sm" id="btn-edit-upload-trigger">
+                                    <i class="fa-solid fa-upload"></i> Upload
+                                </button>
+                                <input type="file" id="edit-file" accept="image/*" style="display: none;">
                             </div>
                         </div>
                         <div id="edit-quality-alert" class="alert-box hide">
@@ -488,6 +641,48 @@
         </div>
     </div>
 
+    <!-- FLOATING CHATBOT WIDGET -->
+    <div class="ai-chat-widget">
+        <!-- Chat Panel -->
+        <div id="ai-chat-panel" class="chat-panel glass">
+            <div class="chat-header">
+                <h3><i class="fa-solid fa-robot"></i> EduVision AI Assistant</h3>
+                <div class="chat-actions">
+                    <button id="clear-chat-btn" title="Clear Conversation"><i class="fa-solid fa-trash-can"></i></button>
+                    <button id="close-chat-btn" title="Close Panel"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            </div>
+            <div class="chat-body" id="chat-messages">
+                <div class="chat-message assistant">
+                    <p>Hello! I am your smart attendance assistant. You can ask me questions about classes, subjects, students, cameras, or attendance records. E.g.,</p>
+                    <p><em>"Was Atharva present yesterday?"</em></p>
+                </div>
+            </div>
+            <!-- Quick suggestions chips -->
+            <div class="chat-suggestions">
+                <span class="suggestion-chip" data-query="Was Atharva present yesterday?">Was Atharva present?</span>
+                <span class="suggestion-chip" data-query="Who was absent today?">Who was absent today?</span>
+                <span class="suggestion-chip" data-query="List all students in COMP 1 class">List students in COMP 1</span>
+                <span class="suggestion-chip" data-query="List all cameras">List cameras</span>
+            </div>
+            <!-- Message Input form -->
+            <form id="chat-input-form" class="chat-footer">
+                <div class="chat-input-wrapper">
+                    <input type="text" id="chat-user-input" placeholder="Ask a question..." required autocomplete="off">
+                </div>
+                <button type="submit" class="chat-send-btn" id="chat-send-btn" title="Send Message">
+                    <i class="fa-solid fa-paper-plane"></i>
+                </button>
+            </form>
+        </div>
+        
+        <!-- Toggle Bubble Button -->
+        <button id="chat-toggle-btn" class="chat-toggle-btn" title="Open AI Assistant">
+            <i class="fa-solid fa-comment-dots"></i>
+        </button>
+    </div>
+
     <script src="app.js"></script>
+    <script src="chat.js"></script>
 </body>
 </html>

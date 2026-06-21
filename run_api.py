@@ -80,6 +80,10 @@ async def startup_event():
     verify_and_seed_users()
     load_system_known_faces()
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 # ----------------- PYDANTIC PAYLOADS -----------------
 
 class LoginPayload(BaseModel):
@@ -370,6 +374,41 @@ async def end_session(session_id: int):
         success, message, results = db.end_session(session_id)
         if not success:
             raise HTTPException(status_code=400, detail=message)
+        
+        # After successfully ending session, trigger email warning notifications
+        try:
+            with db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT class_id, subject_id FROM Sessions WHERE session_id = %s", (session_id,))
+                    row = cur.fetchone()
+            
+            if row:
+                class_id, subject_id = row
+                # Get subject name
+                with db.get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT subject_name FROM Subjects WHERE subject_id = %s", (subject_id,))
+                        sub_row = cur.fetchone()
+                        subject_name = sub_row[0] if sub_row else f"Subject #{subject_id}"
+                
+                # Fetch cumulative attendance for all students in class
+                cumulative_list = db.get_class_cumulative_attendance(class_id, subject_id)
+                
+                # Send email warning to students with < 70% cumulative attendance
+                from email_service import send_attendance_warning
+                for item in cumulative_list:
+                    pct = item["attendance_percentage"]
+                    if pct < 70.0:
+                        email = item["email"]
+                        name = item["name"]
+                        if email:
+                            try:
+                                send_attendance_warning(email, name, subject_name, pct)
+                            except Exception as em:
+                                print(f"✗ Failed triggering warning for {email}: {em}")
+        except Exception as notify_err:
+            print(f"✗ Failed warning emails processor: {notify_err}")
+
         return {
             "success": True,
             "detail": message,
@@ -379,8 +418,281 @@ async def end_session(session_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ----------------- ANALYTICS & CSV BULK IMPORT -----------------
+
+import csv
+import io
+
+@app.get("/api/analytics/class-stats")
+async def get_class_analytics():
+    try:
+        return db.get_class_attendance_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analytics/trends")
+async def get_attendance_trends():
+    try:
+        return db.get_attendance_trends()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/import/students")
+async def import_students(file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        decoded = content.decode('utf-8')
+        csv_reader = csv.reader(io.StringIO(decoded))
+        
+        # Read header and validate
+        header = next(csv_reader, None)
+        if not header:
+            raise HTTPException(status_code=400, detail="Empty CSV file")
+        
+        # Check standard headers (case-insensitive strip matching)
+        header_normalized = [h.strip().lower() for h in header]
+        expected_headers = ["prn", "class_id", "roll_no", "name", "email"]
+        for eh in expected_headers:
+            if eh not in header_normalized:
+                raise HTTPException(status_code=400, detail=f"Missing required column in CSV: {eh}")
+                
+        prn_idx = header_normalized.index("prn")
+        class_idx = header_normalized.index("class_id")
+        roll_idx = header_normalized.index("roll_no")
+        name_idx = header_normalized.index("name")
+        email_idx = header_normalized.index("email")
+        
+        imported_count = 0
+        errors = []
+        
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                for line_no, row in enumerate(csv_reader, start=2):
+                    if not row or len(row) < len(expected_headers):
+                        continue
+                    
+                    try:
+                        prn = row[prn_idx].strip()
+                        class_id = int(row[class_idx].strip())
+                        roll_no = int(row[roll_idx].strip())
+                        name = row[name_idx].strip()
+                        email = row[email_idx].strip()
+                        
+                        if not prn or not name:
+                            raise ValueError("PRN and Name cannot be empty")
+                            
+                        # Insert student (without face embedding initially)
+                        cur.execute("""
+                            INSERT INTO Students (prn_no, class_id, roll_no, name, email)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (prn_no) DO UPDATE 
+                            SET class_id = EXCLUDED.class_id, roll_no = EXCLUDED.roll_no, 
+                                name = EXCLUDED.name, email = EXCLUDED.email
+                        """, (prn, class_id, roll_no, name, email))
+                        imported_count += 1
+                    except Exception as e:
+                        errors.append(f"Row {line_no}: {str(e)}")
+                        
+                conn.commit()
+                
+        detail_msg = f"Successfully registered/updated {imported_count} students."
+        if errors:
+            detail_msg += f" Had issues with {len(errors)} rows: " + "; ".join(errors[:3])
+            if len(errors) > 3:
+                detail_msg += f" and {len(errors)-3} more errors."
+        
+        return {"success": True, "detail": detail_msg}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/import/subjects")
+async def import_subjects(file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        decoded = content.decode('utf-8')
+        csv_reader = csv.reader(io.StringIO(decoded))
+        
+        # Read header and validate
+        header = next(csv_reader, None)
+        if not header:
+            raise HTTPException(status_code=400, detail="Empty CSV file")
+            
+        header_normalized = [h.strip().lower() for h in header]
+        expected_headers = ["subject_code", "subject_name", "class_id", "semester"]
+        for eh in expected_headers:
+            if eh not in header_normalized:
+                raise HTTPException(status_code=400, detail=f"Missing required column in CSV: {eh}")
+                
+        code_idx = header_normalized.index("subject_code")
+        name_idx = header_normalized.index("subject_name")
+        sem_idx = header_normalized.index("semester")
+        
+        imported_count = 0
+        errors = []
+        
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                for line_no, row in enumerate(csv_reader, start=2):
+                    if not row or len(row) < 4:
+                        continue
+                        
+                    try:
+                        code = row[code_idx].strip()
+                        name = row[name_idx].strip()
+                        semester = int(row[sem_idx].strip())
+                        
+                        if not code or not name:
+                            raise ValueError("Subject Code and Subject Name cannot be empty")
+                            
+                        cur.execute("""
+                            INSERT INTO Subjects (subject_code, subject_name, semester)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT (subject_code) DO UPDATE 
+                            SET subject_name = EXCLUDED.subject_name, semester = EXCLUDED.semester
+                        """, (code, name, semester))
+                        imported_count += 1
+                    except Exception as e:
+                        errors.append(f"Row {line_no}: {str(e)}")
+                        
+                conn.commit()
+                
+        detail_msg = f"Successfully registered/updated {imported_count} subjects."
+        if errors:
+            detail_msg += f" Had issues with {len(errors)} rows: " + "; ".join(errors[:3])
+            if len(errors) > 3:
+                detail_msg += f" and {len(errors)-3} more errors."
+                
+        return {"success": True, "detail": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ----------------- OVERRIDE & CAMERA CRUD ENDPOINTS -----------------
+
+class OverridePayload(BaseModel):
+    session_id: int
+    prn: str
+    status: str
+
+class CameraPayload(BaseModel):
+    camera_name: str
+    rtsp_url: Optional[str] = None
+    direction: str
+
+@app.post("/api/attendance/override")
+async def override_attendance(payload: OverridePayload):
+    if payload.status not in ('present', 'absent'):
+        raise HTTPException(status_code=400, detail="Invalid status value. Must be 'present' or 'absent'")
+        
+    success, message = db.override_attendance(payload.session_id, payload.prn, payload.status)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+        
+    # Check if student drops below 70% and trigger warning
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT class_id, subject_id FROM Sessions WHERE session_id = %s", (payload.session_id,))
+                row = cur.fetchone()
+        
+        if row:
+            class_id, subject_id = row
+            # Get subject name
+            with db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT subject_name FROM Subjects WHERE subject_id = %s", (subject_id,))
+                    sub_row = cur.fetchone()
+                    subject_name = sub_row[0] if sub_row else f"Subject #{subject_id}"
+            
+            # Fetch cumulative attendance for this class
+            cumulative_list = db.get_class_cumulative_attendance(class_id, subject_id)
+            
+            # Look up this student specifically
+            student_data = next((item for item in cumulative_list if item["prn"] == payload.prn), None)
+            if student_data:
+                pct = student_data["attendance_percentage"]
+                if pct < 70.0:
+                    email = student_data["email"]
+                    name = student_data["name"]
+                    if email:
+                        from email_service import send_attendance_warning
+                        send_attendance_warning(email, name, subject_name, pct)
+    except Exception as notify_err:
+        print(f"✗ Failed override warning emails checker: {notify_err}")
+        
+    return {"success": True, "detail": message}
+
+@app.get("/api/cameras")
+async def get_cameras():
+    try:
+        return db.get_all_cameras()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/cameras")
+async def add_camera(payload: CameraPayload):
+    if payload.direction not in ('IN', 'OUT', 'BOTH'):
+        raise HTTPException(status_code=400, detail="Invalid camera direction. Must be 'IN', 'OUT', or 'BOTH'")
+    if not payload.camera_name.strip():
+        raise HTTPException(status_code=400, detail="Camera name cannot be empty")
+        
+    success, message, camera_id = db.add_camera(payload.camera_name.strip(), payload.rtsp_url, payload.direction)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    return {"success": True, "detail": message, "camera_id": camera_id}
+
+@app.post("/api/cameras/{camera_id}/edit")
+async def edit_camera(camera_id: int, payload: CameraPayload):
+    if payload.direction not in ('IN', 'OUT', 'BOTH'):
+        raise HTTPException(status_code=400, detail="Invalid camera direction. Must be 'IN', 'OUT', or 'BOTH'")
+    if not payload.camera_name.strip():
+        raise HTTPException(status_code=400, detail="Camera name cannot be empty")
+        
+    success, message = db.update_camera(camera_id, payload.camera_name.strip(), payload.rtsp_url, payload.direction)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    return {"success": True, "detail": message}
+
+@app.delete("/api/cameras/{camera_id}")
+async def delete_camera(camera_id: int):
+    success, message = db.delete_camera(camera_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    return {"success": True, "detail": message}
+
+# ----------------- CONVERSATIONAL AI CHAT ENDPOINT -----------------
+
+class ChatPayload(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+
+@app.post("/api/chat")
+async def chat_ai(payload: ChatPayload):
+    if not payload.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    
+    session_id = payload.session_id or "default_session"
+    
+    try:
+        from ai_agent import query_attendance_ai
+        response = query_attendance_ai(payload.message.strip(), session_id)
+        return {"success": True, "response": response}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat/clear")
+async def chat_clear(payload: ChatPayload):
+    session_id = payload.session_id or "default_session"
+    try:
+        from ai_agent import memory_manager
+        memory_manager.clear_history(session_id)
+        return {"success": True, "detail": "Conversation history cleared successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Mount Web Dashboard files
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 if __name__ == "__main__":
     uvicorn.run("run_api:app", host="127.0.0.1", port=8000, reload=True)
+
