@@ -13,6 +13,8 @@ import time
 from datetime import datetime
 import numpy as np
 
+from email_sender import send_session_attendance_notification
+
 class ClassroomAttendanceApp:
     def __init__(self, root, db_manager, face_engine, camera_manager):
         self.root = root
@@ -365,6 +367,14 @@ class ClassroomAttendanceApp:
             self.video_label.configure(image="")
             
             if success:
+                # Trigger email notifications in a background thread
+                subject_name = self.selected_subject.get()
+                threading.Thread(
+                    target=self.send_session_emails,
+                    args=(results, subject_name),
+                    daemon=True
+                ).start()
+                
                 self.show_attendance_results_window(results)
             else:
                 messagebox.showerror("Error", f"Failed to compile attendance: {msg}")
@@ -372,6 +382,22 @@ class ClassroomAttendanceApp:
         except Exception as e:
             messagebox.showerror("Error", f"Error ending session: {e}")
             
+    def send_session_emails(self, results, subject_name):
+        """Send email notifications in a background thread to avoid freezing the UI"""
+        for item in results:
+            email = item.get("email")
+            if email:
+                try:
+                    send_session_attendance_notification(
+                        student_email=email,
+                        student_name=item["name"],
+                        subject_name=subject_name,
+                        status=item["status"],
+                        percentage=item["presence_percentage"]
+                    )
+                except Exception as e:
+                    print(f"[WARNING] Failed to send email to {email}: {e}")
+
     def update_session_timer(self):
         """Update elapsed session time in UI"""
         if not self.is_session_running:

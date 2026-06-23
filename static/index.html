@@ -12,6 +12,8 @@
          "Use Vanilla CSS for maximum flexibility and control. Avoid using TailwindCSS unless the USER explicitly requests it."
          So we will use a custom stylesheet style.css for max flexibility and ultimate design control. -->
     <link rel="stylesheet" href="style.css">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -66,8 +68,14 @@
                 <button class="nav-item admin-only" data-target="manage-tab">
                     <i class="fa-solid fa-users-gear"></i> <span>Manage Students</span>
                 </button>
+                <button class="nav-item" data-target="analytics-tab">
+                    <i class="fa-solid fa-chart-line"></i> <span>Analytics</span>
+                </button>
                 <button class="nav-item" data-target="logs-tab">
                     <i class="fa-solid fa-clock-rotate-left"></i> <span>Logs & Reports</span>
+                </button>
+                <button class="nav-item" data-target="chat-tab">
+                    <i class="fa-solid fa-comments"></i> <span>AI Assistant</span>
                 </button>
             </nav>
 
@@ -278,10 +286,33 @@
                                 </button>
                             </div>
                             
+                            <div class="upload-controls" style="margin-top: 15px; display: flex; flex-direction: column; gap: 8px;">
+                                <span style="font-size: 0.85rem; color: var(--text-secondary); text-align: center;">OR</span>
+                                <label class="btn-secondary" style="display: block; text-align: center; cursor: pointer; padding: 10px; border-radius: 8px; font-size: 0.9rem;">
+                                    <i class="fa-solid fa-upload"></i> Upload Image File
+                                    <input type="file" id="enroll-file-input" accept="image/*" style="display: none;">
+                                </label>
+                            </div>
+                            
                             <div id="quality-alert" class="alert-box hide">
                                 <span id="quality-msg">Checking face quality...</span>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Bulk CSV Import Card -->
+                    <div class="bulk-enroll-card glass" style="margin-top: 25px; padding: 25px; border-radius: 16px;">
+                        <h3><i class="fa-solid fa-file-csv"></i> Bulk Enroll Students (CSV)</h3>
+                        <p class="instruction" style="margin-bottom: 15px; color: var(--text-secondary); font-size: 0.9rem;">
+                            Upload a CSV file containing columns: <code>prn</code>, <code>name</code>, <code>roll_no</code>, <code>email</code>, <code>class_name</code>.
+                        </p>
+                        <form id="bulk-enroll-form" style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                            <input type="file" id="bulk-enroll-file" accept=".csv" required class="glass-input" style="padding: 10px; flex-grow: 1; min-width: 250px;">
+                            <button type="submit" class="btn-success" id="btn-submit-bulk" style="padding: 12px 24px; border-radius: 12px; font-weight: 600;">
+                                <i class="fa-solid fa-file-import"></i> Import CSV
+                            </button>
+                        </form>
+                        <div id="bulk-import-result" class="alert-box hide" style="margin-top: 15px;"></div>
                     </div>
                 </div>
 
@@ -312,6 +343,37 @@
                                     </tr>
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB: ANALYTICS -->
+                <div id="analytics-tab" class="tab-pane">
+                    <div class="reports-container glass" style="padding: 25px; display: flex; flex-direction: column; gap: 20px; border-radius: 16px;">
+                        <div class="reports-header" style="display: flex; gap: 20px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; flex-wrap: wrap;">
+                            <h3 style="font-size: 1.25rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 8px;"><i class="fa-solid fa-chart-pie"></i> Attendance Analytics</h3>
+                            <div style="display: flex; gap: 15px; align-items: center;">
+                                <select id="analytics-class-select" class="glass-select" style="padding: 10px 15px; border-radius: 12px; width: 220px;">
+                                    <option value="">Select Class...</option>
+                                </select>
+                                <select id="analytics-subject-select" class="glass-select" style="padding: 10px 15px; border-radius: 12px; width: 220px;">
+                                    <option value="">Select Subject...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="analytics-charts-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; min-height: 400px; flex-wrap: wrap;">
+                            <div class="chart-card glass" style="padding: 20px; border-radius: 16px; background: rgba(255, 255, 255, 0.05); min-height: 350px;">
+                                <h4 style="font-size: 1rem; margin-bottom: 15px; color: var(--text-primary);">Subject Performance Comparison (Class Average %)</h4>
+                                <div style="position: relative; height: 300px; width: 100%;">
+                                    <canvas id="subjects-bar-chart"></canvas>
+                                </div>
+                            </div>
+                            <div class="chart-card glass" style="padding: 20px; border-radius: 16px; background: rgba(255, 255, 255, 0.05); min-height: 350px;">
+                                <h4 style="font-size: 1rem; margin-bottom: 15px; color: var(--text-primary);">Attendance Trends (Recent Sessions)</h4>
+                                <div style="position: relative; height: 300px; width: 100%;">
+                                    <canvas id="sessions-line-chart"></canvas>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -365,6 +427,52 @@
                                     </table>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB: AI ASSISTANT -->
+                <div id="chat-tab" class="tab-pane">
+                    <div class="chat-layout-container">
+                        <!-- Left Panel: Suggested Prompts -->
+                        <div class="chat-sidebar glass">
+                            <h3><i class="fa-solid fa-lightbulb"></i> Suggested Queries</h3>
+                            <p class="sidebar-help">Click a query to ask the AI assistant immediately:</p>
+                            <div class="suggestions-list">
+                                <button class="suggestion-btn" data-query="Who is absent today?">
+                                    <i class="fa-solid fa-user-minus"></i> Who is absent today?
+                                </button>
+                                <button class="suggestion-btn" data-query="Who is present today?">
+                                    <i class="fa-solid fa-user-check"></i> Who is present today?
+                                </button>
+                                <button class="suggestion-btn" data-query="Show me all registered students.">
+                                    <i class="fa-solid fa-list-ul"></i> Show all students
+                                </button>
+                                <button class="suggestion-btn" data-query="Is there any student with attendance below 70%?">
+                                    <i class="fa-solid fa-triangle-exclamation"></i> Students below 70% attendance
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Right Panel: Chat Console -->
+                        <div class="chat-console glass">
+                            <!-- Messages timeline -->
+                            <div class="chat-messages" id="chat-messages-timeline">
+                                <div class="message assistant">
+                                    <div class="message-bubble">
+                                        <p>Hello! I am your <strong>EduVision AI Assistant</strong>. Ask me anything about classes, subjects, students, or attendance logs in plain English!</p>
+                                    </div>
+                                    <span class="message-time">Just now</span>
+                                </div>
+                            </div>
+
+                            <!-- Input console -->
+                            <form id="chat-input-form" class="chat-input-area">
+                                <input type="text" id="chat-user-input" placeholder="Type your query (e.g. Who was absent yesterday?)..." required autocomplete="off" class="glass-input">
+                                <button type="submit" id="btn-send-chat" class="btn-primary">
+                                    <i class="fa-solid fa-paper-plane"></i>
+                                </button>
+                            </form>
                         </div>
                     </div>
                 </div>
@@ -473,6 +581,10 @@
                                 <button type="button" id="btn-edit-retake" class="btn-secondary btn-sm hide">
                                     <i class="fa-solid fa-rotate-left"></i> Retake
                                 </button>
+                                <label class="btn-secondary btn-sm" style="cursor: pointer; text-align: center; display: inline-flex; align-items: center; justify-content: center; gap: 4px;">
+                                    <i class="fa-solid fa-upload"></i> Upload
+                                    <input type="file" id="edit-file-input" accept="image/*" style="display: none;">
+                                </label>
                             </div>
                         </div>
                         <div id="edit-quality-alert" class="alert-box hide">

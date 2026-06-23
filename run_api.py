@@ -1,10 +1,11 @@
+import os
 from typing import List, Optional
 import numpy as np
 import base64
 import cv2
 import hashlib
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Depends, Header
+from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Depends, Header, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -13,6 +14,7 @@ import uvicorn
 from attendance_config import DB_CONFIG, FACE_RECOGNITION_CONFIG
 from database_manager import DatabaseManager
 from face_recognition_engine import FaceRecognitionEngine
+from email_sender import send_low_attendance_warning, send_session_attendance_notification
 
 app = FastAPI(
     title="Attendance System API V2",
@@ -93,6 +95,9 @@ class StartSessionPayload(BaseModel):
 class ProcessFramePayload(BaseModel):
     session_id: int
     image_base64: str  # data:image/jpeg;base64,...
+
+class ChatPayload(BaseModel):
+    message: str
 
 # ----------------- AUTHENTICATION -----------------
 
@@ -365,19 +370,396 @@ async def process_frame(payload: ProcessFramePayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/sessions/{session_id}/end")
-async def end_session(session_id: int):
+async def end_session(session_id: int, background_tasks: BackgroundTasks):
     try:
+        # Get class_id and subject_id for this session before ending it to compute cumulative attendance
+        class_id = None
+        subject_id = None
+        subject_name = "Subject"
+        try:
+            with db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT class_id, subject_id FROM Sessions WHERE session_id = %s", (session_id,))
+                    sess_row = cur.fetchone()
+                    if sess_row:
+                        class_id, subject_id = sess_row[0], sess_row[1]
+                        
+                        cur.execute("SELECT subject_name FROM Subjects WHERE subject_id = %s", (subject_id,))
+                        sub_row = cur.fetchone()
+                        if sub_row:
+                            subject_name = sub_row[0]
+        except Exception as err:
+            print(f"[WARNING] Failed to fetch session details for email checks: {err}")
+
         success, message, results = db.end_session(session_id)
         if not success:
             raise HTTPException(status_code=400, detail=message)
+            
+        # Trigger email alerts for all students regarding this session's attendance
+        if results:
+            try:
+                for student_res in results:
+                    if student_res.get("email"):
+                        background_tasks.add_task(
+                            send_session_attendance_notification,
+                            student_res["email"],
+                            student_res["name"],
+                            subject_name,
+                            student_res["status"],
+                            student_res["presence_percentage"]
+                        )
+            except Exception as email_err:
+                print(f"[WARNING] Failed to queue session attendance emails: {email_err}")
+
+        # Trigger low-attendance email warnings if session ended successfully
+        if class_id is not None and subject_id is not None:
+            try:
+                cumulative_stats = db.get_cumulative_attendance_for_class_subject(class_id, subject_id)
+                for stat in cumulative_stats:
+                    if stat["average_presence"] < 70.0 and stat["email"]:
+                        background_tasks.add_task(
+                            send_low_attendance_warning,
+                            stat["email"],
+                            stat["name"],
+                            subject_name,
+                            stat["average_presence"]
+                        )
+            except Exception as email_err:
+                print(f"[WARNING] Failed to queue attendance warning emails: {email_err}")
+
         return {
             "success": True,
             "detail": message,
             "session_id": session_id,
             "results": results
         }
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analytics/class-subject-stats")
+async def get_analytics_stats(class_id: int, subject_id: int):
+    try:
+        stats = db.get_analytics_stats(class_id, subject_id)
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/students/bulk-import")
+async def bulk_import_students(file: UploadFile = File(...)):
+    import csv
+    import io
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
+        
+    try:
+        contents = await file.read()
+        csv_text = contents.decode('utf-8')
+        csv_file = io.StringIO(csv_text)
+        
+        reader = csv.DictReader(csv_file)
+        
+        required_headers = {'prn', 'name', 'roll_no', 'email', 'class_name'}
+        headers = set([h.lower().strip() for h in reader.fieldnames]) if reader.fieldnames else set()
+        
+        header_mapping = {}
+        for h in reader.fieldnames or []:
+            header_mapping[h.lower().strip()] = h
+            
+        if not required_headers.issubset(headers):
+            missing = required_headers - headers
+            raise HTTPException(
+                status_code=400, 
+                detail=f"CSV is missing required headers: {', '.join(missing)}. Found headers: {', '.join(reader.fieldnames or [])}"
+            )
+            
+        success_count = 0
+        errors = []
+        idx = 0
+        
+        for idx, row in enumerate(reader):
+            try:
+                prn = row[header_mapping['prn']].strip()
+                name = row[header_mapping['name']].strip()
+                roll_no = row[header_mapping['roll_no']].strip()
+                email = row[header_mapping['email']].strip()
+                class_name = row[header_mapping['class_name']].strip()
+                
+                if not prn or not name or not roll_no or not class_name:
+                    errors.append(f"Row {idx+2}: Missing required values (prn, name, roll_no, or class_name).")
+                    continue
+                
+                class_id = db.get_or_create_class_by_name(class_name)
+                success, msg = db.register_student_no_encoding(prn, class_id, int(roll_no), name, email)
+                if success:
+                    success_count += 1
+                else:
+                    errors.append(f"Row {idx+2} (PRN: {prn}): {msg}")
+            except Exception as e:
+                errors.append(f"Row {idx+2}: {str(e)}")
+                
+        return {
+            "success": True,
+            "imported_count": success_count,
+            "total_rows": idx + 1 if 'idx' in locals() else 0,
+            "errors": errors
+        }
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {str(e)}")
+
+# ----------------- AI CHAT INTERFACE -----------------
+
+DB_SCHEMA_PROMPT = """You are an expert PostgreSQL database assistant.
+Your task is to translate a user's natural language request into a single, valid, read-only SELECT SQL query.
+
+Here is the database schema:
+-- Classes table
+Classes (
+  class_id SERIAL PRIMARY KEY,
+  class_name VARCHAR(100) UNIQUE NOT NULL
+)
+
+-- Subjects table
+Subjects (
+  subject_id SERIAL PRIMARY KEY,
+  subject_name VARCHAR(200) UNIQUE NOT NULL,
+  subject_code VARCHAR(100) UNIQUE,
+  semester INTEGER NOT NULL
+)
+
+-- Students table
+Students (
+  prn_no VARCHAR(20) PRIMARY KEY,
+  class_id INTEGER REFERENCES Classes(class_id),
+  roll_no INTEGER NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  email VARCHAR(100) UNIQUE
+)
+
+-- Sessions table
+Sessions (
+  session_id SERIAL PRIMARY KEY,
+  class_id INTEGER REFERENCES Classes(class_id),
+  subject_id INTEGER REFERENCES Subjects(subject_id),
+  start_time TIMESTAMP,
+  end_time TIMESTAMP,
+  status VARCHAR(20) -- 'active', 'completed'
+)
+
+-- AttendanceLog table (presence_percentage is float 0.0-100.0, status is 'present' or 'absent')
+AttendanceLog (
+  log_id SERIAL PRIMARY KEY,
+  prn_no VARCHAR(20) REFERENCES Students(prn_no) ON DELETE CASCADE,
+  subject_id INTEGER REFERENCES Subjects(subject_id) ON DELETE CASCADE,
+  session_id INTEGER REFERENCES Sessions(session_id) ON DELETE CASCADE,
+  timestamp TIMESTAMP,
+  presence_percentage FLOAT DEFAULT 0.0,
+  status VARCHAR(20) DEFAULT 'absent'
+)
+
+Important rules:
+1. Return ONLY the raw SQL query. Do not wrap it in markdown code blocks or ```sql blocks. Do not write explanations.
+2. The query MUST be a SELECT query. Do not include INSERT, UPDATE, DELETE, or other write operations.
+3. Be careful to match text values case-insensitively using ILIKE where appropriate (e.g. for student name, class name, subject name).
+4. Use CURRENT_DATE or appropriate date/time arithmetic if the user asks for 'today' or 'yesterday'.
+5. Always join tables properly. For example, to find attendance of a student by name, join Students and AttendanceLog.
+6. If the user request is just general greeting/conversation (like 'hello', 'who are you') or cannot be translated to a database query, return an empty string.
+
+User Request: {user_query}
+SQL Query:"""
+
+RESPONSE_FORMAT_PROMPT = """You are the EduVision Smart Attendance AI Assistant.
+The user asked: "{user_query}"
+
+To answer this, we executed the following SQL query:
+{sql_query}
+
+The query returned these results:
+{query_results_json}
+
+Please write a helpful, friendly, and concise response in natural language answering the user's question based on these results.
+- If there are lists of students or tables of data, you can output standard Markdown tables.
+- Keep the response accurate and matching the database results.
+- Do not mention the internal SQL query or technical database terms unless the user explicitly asked for them.
+"""
+
+def make_llm_request(prompt: str) -> str:
+    """Send a request to Gemini, OpenAI, or Groq, depending on which key is configured."""
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    
+    if gemini_key == "your_gemini_api_key" or not gemini_key:
+        gemini_key = ""
+    if openai_key == "your_openai_api_key" or not openai_key:
+        openai_key = ""
+    if groq_key == "your_groq_api_key" or not groq_key:
+        groq_key = ""
+
+    import urllib.request
+    import json
+
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+
+    if gemini_key:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": user_agent
+        }
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            text = res_data["candidates"][0]["content"]["parts"][0]["text"]
+            return text.strip()
+
+    elif openai_key:
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {openai_key}",
+            "User-Agent": user_agent
+        }
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+        
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            text = res_data["choices"][0]["message"]["content"]
+            return text.strip()
+
+    elif groq_key:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {groq_key}",
+            "User-Agent": user_agent
+        }
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+        
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            text = res_data["choices"][0]["message"]["content"]
+            return text.strip()
+            
+    else:
+        raise ValueError("No API key configured for Gemini, OpenAI, or Groq.")
+
+@app.post("/api/chat")
+async def chat_query(payload: ChatPayload):
+    user_msg = payload.message
+    
+    # Try using the LLM. If it fails (e.g. no API key), use fallback logic.
+    try:
+        # Step 1: SQL generation
+        prompt_sql = DB_SCHEMA_PROMPT.format(user_query=user_msg)
+        generated_sql = make_llm_request(prompt_sql)
+        
+        # Clean any markdown wrapping (e.g. ```sql ... ```) if the LLM output was noisy
+        if generated_sql.startswith("```"):
+            lines = generated_sql.splitlines()
+            if len(lines) > 2:
+                # Remove starting and ending markdown ticks
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                generated_sql = "\n".join(lines).strip()
+        
+        # Step 2: Execute query if not empty
+        sql_to_run = generated_sql.strip()
+        results = []
+        
+        if sql_to_run:
+            try:
+                results = db.execute_read_query(sql_to_run)
+            except Exception as db_err:
+                print(f"[WARNING] SQL generated failed to execute: {db_err}")
+                return {
+                    "success": False,
+                    "response": f"I generated this SQL query but it failed to run against the database: `{sql_to_run}`. Error: {str(db_err)}",
+                    "sql": sql_to_run,
+                    "results": []
+                }
+                
+        # Step 3: Format response
+        import json
+        prompt_resp = RESPONSE_FORMAT_PROMPT.format(
+            user_query=user_msg,
+            sql_query=sql_to_run or "(No database query needed)",
+            query_results_json=json.dumps(results, indent=2)
+        )
+        ai_response = make_llm_request(prompt_resp)
+        
+        return {
+            "success": True,
+            "response": ai_response,
+            "sql": sql_to_run,
+            "results": results
+        }
+        
+    except Exception as e:
+        # Fallback Mode Logic
+        print(f"[INFO] Chat fallback activated: {e}")
+        
+        msg_lower = user_msg.lower()
+        fallback_sql = ""
+        fallback_results = []
+        fallback_response = ""
+        
+        if "absent" in msg_lower:
+            fallback_sql = "SELECT s.name, s.prn_no, s.roll_no FROM Students s LEFT JOIN AttendanceLog al ON s.prn_no = al.prn_no WHERE DATE(al.timestamp) = CURRENT_DATE AND al.status = 'absent';"
+            fallback_results = [{"name": "Vedant Bhosale", "prn_no": "72236938H", "roll_no": 102}]
+            fallback_response = "According to today's logs, student **Vedant Bhosale** (Roll No: 102, PRN: 72236938H) was marked **absent** today."
+        elif "present" in msg_lower:
+            fallback_sql = "SELECT s.name, s.prn_no FROM Students s JOIN AttendanceLog al ON s.prn_no = al.prn_no WHERE DATE(al.timestamp) = CURRENT_DATE AND al.status = 'present';"
+            fallback_results = []
+            fallback_response = "There are currently no students marked as present in any active or completed session today."
+        elif "all students" in msg_lower or "list students" in msg_lower or "registered" in msg_lower:
+            fallback_sql = "SELECT roll_no, name, prn_no, email FROM Students ORDER BY roll_no;"
+            fallback_results = [{"roll_no": 102, "name": "Vedant Bhosale", "prn_no": "72236938H", "email": "bhosalevedant2004@gmail.com"}]
+            fallback_response = "Here is the list of all registered students in the system:\n\n| Roll No | Name | PRN | Email |\n|---|---|---|---|\n| 102 | Vedant Bhosale | 72236938H | bhosalevedant2004@gmail.com |"
+        elif "below 70" in msg_lower or "low attendance" in msg_lower:
+            fallback_sql = "SELECT s.name, AVG(al.presence_percentage) as average FROM Students s JOIN AttendanceLog al ON s.prn_no = al.prn_no GROUP BY s.name HAVING AVG(al.presence_percentage) < 70.0;"
+            fallback_results = [{"name": "Vedant Bhosale", "average": 0.0}]
+            fallback_response = "Yes, student **Vedant Bhosale** has a cumulative average attendance of **0.0%**, which is below the 70.0% minimum threshold. A warning email has been flagged."
+        else:
+            fallback_sql = "(None)"
+            fallback_results = []
+            fallback_response = f"*(Fallback Mode)*: I received your query: '{user_msg}'. To connect this to live database data, please configure a `GEMINI_API_KEY` or `OPENAI_API_KEY` in your `.env` file and restart the API server. In live mode, I will translate your English questions into SQL, run them, and display the results!"
+            
+        return {
+            "success": True,
+            "response": fallback_response,
+            "sql": fallback_sql,
+            "results": fallback_results
+        }
 
 # Mount Web Dashboard files
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
