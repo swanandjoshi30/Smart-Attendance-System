@@ -282,7 +282,140 @@ class DatabaseManager:
                 "present_today": present_today,
                 "absent_today": absent_today
             }
-    
+
+    def get_cumulative_attendance_for_class_subject(self, class_id, subject_id):
+        """Get cumulative attendance for all students in a class for a specific subject"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Count total sessions for this class and subject in Sessions table (completed status)
+                cur.execute("""
+                    SELECT COUNT(*) FROM Sessions 
+                    WHERE class_id = %s AND subject_id = %s AND status = 'completed'
+                """, (class_id, subject_id))
+                total_sessions = cur.fetchone()[0]
+
+                # Fetch all students in the class
+                cur.execute("""
+                    SELECT prn_no, roll_no, name, email 
+                    FROM Students 
+                    WHERE class_id = %s 
+                    ORDER BY roll_no
+                """, (class_id,))
+                students = cur.fetchall()
+
+                # For each student, get their logs for this subject
+                results = []
+                for prn, roll_no, name, email in students:
+                    cur.execute("""
+                        SELECT presence_percentage, status 
+                        FROM AttendanceLog 
+                        WHERE prn_no = %s AND subject_id = %s
+                    """, (prn, subject_id))
+                    logs = cur.fetchall()
+                    
+                    sessions_attended = sum(1 for log in logs if log[1] == 'present')
+                    
+                    if total_sessions > 0:
+                        # average presence is the sum of presence_percentages divided by total_sessions
+                        avg_presence = sum(log[0] for log in logs) / total_sessions
+                    else:
+                        avg_presence = 0.0
+
+                    results.append({
+                        "prn": prn,
+                        "roll_no": roll_no,
+                        "name": name,
+                        "email": email,
+                        "total_sessions": total_sessions,
+                        "sessions_attended": sessions_attended,
+                        "average_presence": avg_presence
+                    })
+                return results
+
+    def get_analytics_stats(self, class_id, subject_id):
+        """Get database stats for attendance analytics dashboard"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # 1. Subject averages for the selected class
+                cur.execute("""
+                    SELECT s.subject_id, s.subject_name, COALESCE(AVG(al.presence_percentage), 0.0) as avg_presence
+                    FROM Subjects s
+                    CROSS JOIN (SELECT class_id FROM Classes WHERE class_id = %s) c
+                    LEFT JOIN Students st ON st.class_id = c.class_id
+                    LEFT JOIN AttendanceLog al ON al.prn_no = st.prn_no AND al.subject_id = s.subject_id
+                    GROUP BY s.subject_id, s.subject_name
+                    ORDER BY s.subject_name
+                """, (class_id,))
+                
+                subject_rows = cur.fetchall()
+                subject_averages = [
+                    {"subject_id": r[0], "subject_name": r[1], "avg_attendance": float(r[2])}
+                    for r in subject_rows
+                ]
+
+                # 2. Session-by-session trends for this class and subject (last 10 completed sessions)
+                cur.execute("""
+                    SELECT s.session_id, s.start_time, COALESCE(AVG(al.presence_percentage), 0.0) as avg_presence
+                    FROM Sessions s
+                    LEFT JOIN AttendanceLog al ON al.session_id = s.session_id
+                    WHERE s.class_id = %s AND s.subject_id = %s AND s.status = 'completed'
+                    GROUP BY s.session_id, s.start_time
+                    ORDER BY s.start_time ASC
+                    LIMIT 10
+                """, (class_id, subject_id))
+                session_rows = cur.fetchall()
+                session_trends = [
+                    {"session_id": r[0], "start_time": str(r[1]), "avg_attendance": float(r[2])}
+                    for r in session_rows
+                ]
+
+                return {
+                    "subject_averages": subject_averages,
+                    "session_trends": session_trends
+                }
+
+    def get_or_create_class_by_name(self, class_name):
+        """Fetch class_id for a class_name, creating it if it doesn't exist"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT class_id FROM Classes WHERE class_name = %s", (class_name,))
+                row = cur.fetchone()
+                if row:
+                    return row[0]
+                
+                cur.execute("INSERT INTO Classes (class_name) VALUES (%s) RETURNING class_id", (class_name,))
+                class_id = cur.fetchone()[0]
+                conn.commit()
+                return class_id
+
+    def register_student_no_encoding(self, prn, class_id, roll_no, name, email):
+        """Register a student without face encoding (useful for bulk import)"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO Students (prn_no, class_id, roll_no, name, email) 
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (prn_no) DO UPDATE 
+                        SET class_id = EXCLUDED.class_id, roll_no = EXCLUDED.roll_no, name = EXCLUDED.name, email = EXCLUDED.email
+                        """,
+                        (prn, class_id, int(roll_no), name, email)
+                    )
+                    conn.commit()
+                    return True, "Student registered successfully"
+                except psycopg2.IntegrityError as e:
+                    conn.rollback()
+                    if "students_email_key" in str(e):
+                        return False, f"Email '{email}' already exists"
+                    elif "unique_roll_in_class" in str(e):
+                        return False, f"Roll number '{roll_no}' already exists in this class"
+                    else:
+                        return False, str(e)
+                except Exception as e:
+                    conn.rollback()
+                    return False, str(e)
+
     def start_session(self, class_id, subject_id):
         """Start a new classroom session. Sets status='active'. Ends any existing active session."""
         with self.get_connection() as conn:
@@ -363,7 +496,7 @@ class DatabaseManager:
                 
                 # 3. Fetch all students in this class
                 cur.execute(
-                    "SELECT prn_no, name, roll_no FROM Students WHERE class_id = %s ORDER BY roll_no",
+                    "SELECT prn_no, name, roll_no, email FROM Students WHERE class_id = %s ORDER BY roll_no",
                     (class_id,)
                 )
                 students = cur.fetchall()
@@ -383,7 +516,7 @@ class DatabaseManager:
                 
                 results = []
                 # 5. Calculate presence percentage for each student
-                for prn, name, roll_no in students:
+                for prn, name, roll_no, email in students:
                     times = student_detections[prn]
                     if not times:
                         presence_percentage = 0.0
@@ -412,6 +545,7 @@ class DatabaseManager:
                         "prn": prn,
                         "name": name,
                         "roll_no": roll_no,
+                        "email": email,
                         "presence_percentage": round(presence_percentage, 1),
                         "status": status
                     })
@@ -445,6 +579,27 @@ class DatabaseManager:
                         "name": user[3]
                     }
         return None
+
+    def execute_read_query(self, query, params=None):
+        """Execute a read-only SELECT query and return list of dicts (rows)"""
+        cleaned_query = query.strip().upper()
+        if not cleaned_query.startswith("SELECT"):
+            raise ValueError("Only SELECT queries are allowed for safety reasons.")
+        
+        # Basic SQL injection / destructive command safety check
+        destructive_keywords = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE"]
+        for kw in destructive_keywords:
+            if f" {kw} " in f" {cleaned_query} " or cleaned_query.endswith(kw) or cleaned_query.startswith(kw):
+                raise ValueError(f"Unauthorized destructive keyword '{kw}' detected in query.")
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params or ())
+                if cur.description:
+                    colnames = [desc[0] for desc in cur.description]
+                    rows = cur.fetchall()
+                    return [dict(zip(colnames, row)) for row in rows]
+                return []
 
     def close(self):
         """Close all connections in the pool"""

@@ -188,6 +188,101 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Check active session on page load
     checkActiveSessionOnLoad();
+
+    // Image uploads
+    const enrollFileInput = document.getElementById("enroll-file-input");
+    if (enrollFileInput) {
+        enrollFileInput.addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const base64Data = evt.target.result;
+                stopEnrollWebcam();
+                capturedImg.src = base64Data;
+                enrollVideo.classList.add("hide");
+                capturedImg.classList.remove("hide");
+                btnCapture.classList.add("hide");
+                btnRetake.classList.remove("hide");
+                validateCapturedFace(base64Data);
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+    
+    const editFileInput = document.getElementById("edit-file-input");
+    if (editFileInput) {
+        editFileInput.addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const base64Data = evt.target.result;
+                stopEditWebcam();
+                editCapturedImageBase64 = base64Data;
+                editCapturedImg.src = base64Data;
+                editCapturedImg.classList.remove("hide");
+                editVideo.classList.add("hide");
+                if (btnEditCapture) btnEditCapture.classList.add("hide");
+                if (btnEditRetake) btnEditRetake.classList.remove("hide");
+                if (editPhotoPlaceholder) editPhotoPlaceholder.classList.add("hide");
+                validateEditFace(base64Data);
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    // Bulk CSV Enrollment submit
+    const bulkEnrollForm = document.getElementById("bulk-enroll-form");
+    const bulkEnrollFile = document.getElementById("bulk-enroll-file");
+    const bulkImportResult = document.getElementById("bulk-import-result");
+    
+    if (bulkEnrollForm) {
+        bulkEnrollForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            if (!bulkEnrollFile.files || bulkEnrollFile.files.length === 0) {
+                alert("Please select a CSV file to upload.");
+                return;
+            }
+            
+            const file = bulkEnrollFile.files[0];
+            const formData = new FormData();
+            formData.append("file", file);
+            
+            bulkImportResult.classList.remove("hide");
+            bulkImportResult.className = "alert-box info";
+            bulkImportResult.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Uploading and importing student records...`;
+            
+            try {
+                const response = await fetch(`${API_URL}/api/students/bulk-import`, {
+                    method: "POST",
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || "Import failed");
+                
+                let resultMsg = `<i class="fa-solid fa-circle-check"></i> Bulk Import Complete! Successfully imported <strong>${data.imported_count}</strong> students.`;
+                if (data.errors && data.errors.length > 0) {
+                    resultMsg += `<br><br><strong>Errors encountered (${data.errors.length}):</strong><ul style="margin-left: 20px; font-size: 0.85rem; max-height: 100px; overflow-y: auto;">`;
+                    data.errors.forEach(err => {
+                        resultMsg += `<li>${err}</li>`;
+                    });
+                    resultMsg += `</ul>`;
+                }
+                
+                bulkImportResult.className = "alert-box success";
+                bulkImportResult.innerHTML = resultMsg;
+                bulkEnrollForm.reset();
+                loadEnrolledStudents();
+            } catch(err) {
+                bulkImportResult.className = "alert-box error";
+                bulkImportResult.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> Import failed: ${err.message}`;
+            }
+        });
+    }
 });
 
 function updateClock() {
@@ -410,6 +505,18 @@ function switchTab(tabId) {
         pageTitle.textContent = "Attendance Log Archives";
         pageSubtitle.textContent = "Review historic attendance registers and student enrollment records";
         fetchSystemLogs();
+    }
+
+    if (tabId === "analytics-tab") {
+        pageTitle.textContent = "Attendance Analytics & Insights";
+        pageSubtitle.textContent = "Class comparison and session tracking trends";
+        initAnalyticsTab();
+    }
+
+    if (tabId === "chat-tab") {
+        pageTitle.textContent = "AI Assistant";
+        pageSubtitle.textContent = "Ask questions in plain English to query the database";
+        initChatTab();
     }
 }
 
@@ -1529,4 +1636,334 @@ async function submitEditStudent(e) {
         btnSubmitEdit.disabled = false;
         btnSubmitEdit.innerHTML = `<i class="fa-solid fa-save"></i> Save Profile Changes`;
     }
+}
+
+// ------------------ ATTENDANCE ANALYTICS LOGIC ------------------
+let subjectsBarChart = null;
+let sessionsLineChart = null;
+
+async function initAnalyticsTab() {
+    populateAnalyticsDropdowns();
+    fetchAndDrawCharts();
+}
+
+function populateAnalyticsDropdowns() {
+    const classSelectAn = document.getElementById("analytics-class-select");
+    const subjSelectAn = document.getElementById("analytics-subject-select");
+    
+    if (!classSelectAn || !subjSelectAn) return;
+    
+    if (classSelectAn.options.length <= 1) {
+        classSelectAn.innerHTML = `<option value="">Select Class...</option>`;
+        classes.forEach(c => {
+            classSelectAn.insertAdjacentHTML("beforeend", `<option value="${c.id}">${c.name}</option>`);
+        });
+        classSelectAn.addEventListener("change", fetchAndDrawCharts);
+    }
+    
+    if (subjSelectAn.options.length <= 1) {
+        subjSelectAn.innerHTML = `<option value="">Select Subject...</option>`;
+        subjects.forEach(s => {
+            subjSelectAn.insertAdjacentHTML("beforeend", `<option value="${s.id}">${s.name} (${s.code || ''})</option>`);
+        });
+        subjSelectAn.addEventListener("change", fetchAndDrawCharts);
+    }
+    
+    if (!classSelectAn.value && classes.length > 0) {
+        classSelectAn.value = classes[0].id;
+    }
+    if (!subjSelectAn.value && subjects.length > 0) {
+        subjSelectAn.value = subjects[0].id;
+    }
+}
+
+async function fetchAndDrawCharts() {
+    const classId = document.getElementById("analytics-class-select").value;
+    const subjectId = document.getElementById("analytics-subject-select").value;
+    
+    if (!classId || !subjectId) return;
+    
+    try {
+        const response = await fetch(`${API_URL}/api/analytics/class-subject-stats?class_id=${classId}&subject_id=${subjectId}`);
+        if (!response.ok) throw new Error("Failed to fetch analytics");
+        
+        const data = await response.json();
+        drawSubjectsBarChart(data.subject_averages);
+        drawSessionsLineChart(data.session_trends);
+    } catch(e) {
+        console.error("Analytics chart render failure:", e);
+    }
+}
+
+function drawSubjectsBarChart(subjectAverages) {
+    const ctx = document.getElementById("subjects-bar-chart").getContext("2d");
+    if (!ctx) return;
+    
+    if (subjectsBarChart) {
+        subjectsBarChart.destroy();
+    }
+    
+    const labels = subjectAverages.map(s => s.subject_name.length > 20 ? s.subject_name.substring(0, 17) + "..." : s.subject_name);
+    const datasetData = subjectAverages.map(s => s.avg_attendance);
+    
+    const backgroundColors = datasetData.map(val => val >= 70.0 ? "rgba(16, 185, 129, 0.6)" : "rgba(239, 68, 68, 0.6)");
+    const borderColors = datasetData.map(val => val >= 70.0 ? "rgba(16, 185, 129, 1)" : "rgba(239, 68, 68, 1)");
+
+    subjectsBarChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Class Average Attendance %',
+                data: datasetData,
+                backgroundColor: backgroundColors,
+                borderColor: borderColors,
+                borderWidth: 2,
+                borderRadius: 8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                    ticks: { color: '#94a3b8' }
+                },
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#94a3b8' }
+                }
+            },
+            plugins: {
+                legend: { display: false }
+            }
+        }
+    });
+}
+
+function drawSessionsLineChart(sessionTrends) {
+    const ctx = document.getElementById("sessions-line-chart").getContext("2d");
+    if (!ctx) return;
+    
+    if (sessionsLineChart) {
+        sessionsLineChart.destroy();
+    }
+    
+    const labels = sessionTrends.map(s => {
+        const d = new Date(s.start_time);
+        return d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) + " #" + s.session_id;
+    });
+    const datasetData = sessionTrends.map(s => s.avg_attendance);
+
+    sessionsLineChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Presence Average %',
+                data: datasetData,
+                borderColor: '#2196F3',
+                backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                borderWidth: 3,
+                fill: true,
+                tension: 0.3,
+                pointBackgroundColor: '#2196F3',
+                pointRadius: 5
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                    ticks: { color: '#94a3b8' }
+                },
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#94a3b8' }
+                }
+            },
+            plugins: {
+                legend: { display: false }
+            }
+        }
+    });
+}
+
+// ------------------ AI CHAT INTERFACE LIFE-CYCLE ------------------
+let isChatInitialized = false;
+
+function initChatTab() {
+    if (isChatInitialized) return;
+    isChatInitialized = true;
+    
+    const chatForm = document.getElementById("chat-input-form");
+    const chatInput = document.getElementById("chat-user-input");
+    const chatTimeline = document.getElementById("chat-messages-timeline");
+    
+    if (chatForm) {
+        chatForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const messageText = chatInput.value.trim();
+            if (!messageText) return;
+            
+            chatInput.value = "";
+            
+            // 1. Append User Message
+            appendChatMessage("user", messageText);
+            
+            // 2. Append Assistant Loading Bubble
+            const loadingBubbleId = appendChatLoadingBubble();
+            
+            // Scroll to bottom
+            chatTimeline.scrollTop = chatTimeline.scrollHeight;
+            
+            try {
+                const response = await fetch(`${API_URL}/api/chat`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ message: messageText })
+                });
+                
+                const data = await response.json();
+                removeChatLoadingBubble(loadingBubbleId);
+                
+                if (response.ok && data.success) {
+                    appendChatMessage("assistant", data.response, data.sql, data.results);
+                } else {
+                    appendChatMessage("assistant", `Sorry, I encountered an error: ${data.response || "Unknown error"}`);
+                }
+            } catch (err) {
+                removeChatLoadingBubble(loadingBubbleId);
+                appendChatMessage("assistant", `Unable to reach the assistant service. Error details: ${err.message}`);
+            }
+            
+            chatTimeline.scrollTop = chatTimeline.scrollHeight;
+        });
+    }
+    
+    // Bind quick suggestions click
+    const suggestionBtns = document.querySelectorAll(".suggestion-btn");
+    suggestionBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            const query = btn.getAttribute("data-query");
+            if (chatInput) {
+                chatInput.value = query;
+                chatInput.focus();
+            }
+        });
+    });
+}
+
+function appendChatMessage(sender, text, sql = "", results = null) {
+    const chatTimeline = document.getElementById("chat-messages-timeline");
+    if (!chatTimeline) return;
+    
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const messageDiv = document.createElement("div");
+    messageDiv.className = `message ${sender}`;
+    
+    const bubbleDiv = document.createElement("div");
+    bubbleDiv.className = "message-bubble";
+    
+    // Simple markdown-style conversions for formatting
+    let formattedText = text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/\n/g, '<br>');
+        
+    bubbleDiv.innerHTML = `<p>${formattedText}</p>`;
+    
+    // Render tabular results in bubble if returned
+    if (Array.isArray(results) && results.length > 0) {
+        const table = document.createElement("table");
+        const keys = Object.keys(results[0]);
+        
+        // Build table head
+        const thead = document.createElement("thead");
+        const trHead = document.createElement("tr");
+        keys.forEach(k => {
+            const displayKey = k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+            trHead.insertAdjacentHTML("beforeend", `<th>${displayKey}</th>`);
+        });
+        thead.appendChild(trHead);
+        table.appendChild(thead);
+        
+        // Build table body
+        const tbody = document.createElement("tbody");
+        results.forEach(row => {
+            const trRow = document.createElement("tr");
+            keys.forEach(k => {
+                const val = row[k] !== null && row[k] !== undefined ? row[k] : "--";
+                trRow.insertAdjacentHTML("beforeend", `<td>${val}</td>`);
+            });
+            tbody.appendChild(trRow);
+        });
+        table.appendChild(tbody);
+        bubbleDiv.appendChild(table);
+    }
+    
+    // Render toggle SQL query
+    if (sql && sql !== "(None)" && sql.trim() !== "") {
+        const sqlToggle = document.createElement("div");
+        sqlToggle.className = "chat-sql-toggle";
+        sqlToggle.innerHTML = `
+            <div class="chat-sql-header" onclick="toggleChatSql(this)">
+                <span><i class="fa-solid fa-database"></i> Executed PostgreSQL Query</span>
+                <i class="fa-solid fa-chevron-down"></i>
+            </div>
+            <div class="chat-sql-body">${sql}</div>
+        `;
+        bubbleDiv.appendChild(sqlToggle);
+    }
+    
+    messageDiv.appendChild(bubbleDiv);
+    messageDiv.insertAdjacentHTML("beforeend", `<span class="message-time">${timeStr}</span>`);
+    
+    chatTimeline.appendChild(messageDiv);
+    chatTimeline.scrollTop = chatTimeline.scrollHeight;
+}
+
+function appendChatLoadingBubble() {
+    const chatTimeline = document.getElementById("chat-messages-timeline");
+    if (!chatTimeline) return null;
+    
+    const bubbleId = "loading-" + Date.now();
+    const loadingDiv = document.createElement("div");
+    loadingDiv.className = "message assistant";
+    loadingDiv.id = bubbleId;
+    
+    loadingDiv.innerHTML = `
+        <div class="message-bubble">
+            <div class="chat-bubble-loading">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+    `;
+    
+    chatTimeline.appendChild(loadingDiv);
+    chatTimeline.scrollTop = chatTimeline.scrollHeight;
+    return bubbleId;
+}
+
+function removeChatLoadingBubble(bubbleId) {
+    if (!bubbleId) return;
+    const element = document.getElementById(bubbleId);
+    if (element) {
+        element.remove();
+    }
+}
+
+window.toggleChatSql = function(headerElement) {
+    headerElement.parentElement.classList.toggle("open");
 }
