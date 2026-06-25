@@ -27,9 +27,9 @@ FACE_RECOGNITION_CONFIG = {
     'yolo_model': 'yolov8n.pt',
     'yolo_confidence': 0.3,
     'insightface_model': 'buffalo_l',
-    'det_thresh': 0.6,
-    'det_size': (640, 640),
-    'recognition_tolerance': 0.65,
+    'det_thresh': 0.45,
+    'det_size': (1280, 736),
+    'recognition_tolerance': 0.95,
     'detection_scale': 1.0,
 }
 
