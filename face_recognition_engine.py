@@ -169,11 +169,18 @@ class FaceRecognitionEngine:
                 best_idx = int(np.argmin(distances))
                 best_dist = float(distances[best_idx])
 
-                confidence = max(0.0, min(100.0, (1.2 - best_dist) / 1.2 * 100))
+                # Piecewise linear mapping to dynamically adjust confidence based on the threshold.
+                # If distance is <= threshold, confidence is between 50% and 100%.
+                # If distance is > threshold, confidence is between 0% and 50%.
                 if best_dist <= threshold:
+                    confidence = 50.0 + 50.0 * (1.0 - (best_dist / threshold if threshold > 0 else 0))
+                    confidence = max(50.0, min(100.0, confidence))
                     prn = self.known_prns[best_idx]
                     results.append((prn, confidence))
                 else:
+                    denominator = max(0.01, 2.0 - threshold)
+                    confidence = 50.0 * (1.0 - (best_dist - threshold) / denominator)
+                    confidence = max(0.0, min(49.9, confidence))
                     results.append((None, confidence))
 
         return results
