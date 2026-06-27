@@ -417,6 +417,10 @@ let sessionStartedAt  = null;  // Date object
 let timerHandle       = null;
 let detLoopHandle     = null;
 
+// Track the actual configured camera URLs to check for IP cameras (HTTP/MJPEG)
+let inCamUrl          = '';
+let outCamUrl         = '';
+
 // Cooldown tracking: prevent firing entry/exit API for the
 // same student more than once within COOLDOWN_MS milliseconds.
 // Key: `${prn}:${camType}` → timestamp of last API call.
@@ -568,10 +572,14 @@ async function activateSessionUI(classId) {
     try {
         const res  = await fetch(`/api/classes/${classId}/cameras`);
         const cfg  = await res.json();
-        await setupCameraFeed('in',  cfg.in_camera_url  || '');
-        await setupCameraFeed('out', cfg.out_camera_url || '');
+        inCamUrl   = cfg.in_camera_url  || '';
+        outCamUrl  = cfg.out_camera_url || '';
+        await setupCameraFeed('in',  inCamUrl);
+        await setupCameraFeed('out', outCamUrl);
     } catch (err) {
         console.error('Camera config fetch failed', err);
+        inCamUrl   = '';
+        outCamUrl  = '';
         // Fall back: both cameras use local webcam
         await setupCameraFeed('in',  '');
         await setupCameraFeed('out', '');
@@ -684,46 +692,79 @@ function startDetectionLoop(classId) {
 async function captureAndProcess(side, classId, camType) {
     const video = document.getElementById(`${side}-video`);
     const img   = document.getElementById(`${side}-img`);
+    const camUrl = side === 'in' ? inCamUrl : outCamUrl;
+    const isIPCamera = camUrl && /^https?:\/\//i.test(camUrl.trim());
 
-    let base64 = null;
+    let results = [];
 
-    // Capture from video element (webcam / HLS)
-    if (video.style.display !== 'none' && video.videoWidth > 0) {
-        const offscreen = document.createElement('canvas');
-        offscreen.width  = video.videoWidth;
-        offscreen.height = video.videoHeight;
-        offscreen.getContext('2d').drawImage(video, 0, 0);
-        base64 = offscreen.toDataURL('image/jpeg', 0.8);
+    if (isIPCamera) {
+        // Bypass client-side canvas capture due to CORS/tainted-canvas restriction
+        try {
+            const res = await fetch('/api/sessions/process-ip-camera-frame', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: currentSessionId,
+                    camera_url: camUrl,
+                    class_id: classId
+                })
+            });
+            const data = await res.json();
+            if (!data.success) {
+                console.warn(`Server failed to process IP camera frame for ${side}:`, data.detail);
+                return;
+            }
+            results = data.results || [];
+        } catch (err) {
+            console.error(`Error processing IP camera frame on server side (${side}):`, err);
+            return;
+        }
+    } else {
+        // Local webcam or HLS stream - process using client-side canvas extraction
+        let base64 = null;
+        if (video.style.display !== 'none' && video.videoWidth > 0) {
+            const offscreen = document.createElement('canvas');
+            offscreen.width  = video.videoWidth;
+            offscreen.height = video.videoHeight;
+            offscreen.getContext('2d').drawImage(video, 0, 0);
+            base64 = offscreen.toDataURL('image/jpeg', 0.8);
+        } else if (img.style.display !== 'none' && img.naturalWidth > 0) {
+            const offscreen = document.createElement('canvas');
+            offscreen.width  = img.naturalWidth;
+            offscreen.height = img.naturalHeight;
+            offscreen.getContext('2d').drawImage(img, 0, 0);
+            base64 = offscreen.toDataURL('image/jpeg', 0.8);
+        }
+
+        if (!base64 || !currentSessionId) return;
+
+        try {
+            const res  = await fetch('/api/sessions/process-frame', {
+                method : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body   : JSON.stringify({
+                    session_id  : currentSessionId,
+                    image_base64: base64
+                })
+            });
+            const data = await res.json();
+            if (!data.success) return;
+            results = data.results || [];
+        } catch (err) {
+            console.error(`processFrame error (${side})`, err);
+            return;
+        }
     }
-    // Capture from img element (MJPEG stream)
-    else if (img.style.display !== 'none' && img.naturalWidth > 0) {
-        const offscreen = document.createElement('canvas');
-        offscreen.width  = img.naturalWidth;
-        offscreen.height = img.naturalHeight;
-        offscreen.getContext('2d').drawImage(img, 0, 0);
-        base64 = offscreen.toDataURL('image/jpeg', 0.8);
-    }
 
-    if (!base64 || !currentSessionId) return;
+    if (!currentSessionId) return;
 
     try {
-        const res  = await fetch('/api/sessions/process-frame', {
-            method : 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body   : JSON.stringify({
-                session_id  : currentSessionId,
-                image_base64: base64
-            })
-        });
-        const data = await res.json();
-        if (!data.success) return;
-
         // Render bounding boxes on the overlay canvas
-        renderOverlay(side, data.results, video, img);
+        renderOverlay(side, results, video, img);
 
         // Process each recognised face
         const now = new Date().toISOString();
-        for (const face of data.results) {
+        for (const face of results) {
             if (!face.prn) continue;  // unknown face — skip
 
             const cooldownMs = camType === 'entry' ? ENTRY_COOLDOWN_MS : EXIT_COOLDOWN_MS;
@@ -747,7 +788,7 @@ async function captureAndProcess(side, classId, camType) {
             addDetectionRow(face.name, face.prn, camType, face.confidence);
         }
     } catch (err) {
-        console.error(`processFrame error (${side})`, err);
+        console.error(`Error handling recognized faces (${side})`, err);
     }
 }
 
