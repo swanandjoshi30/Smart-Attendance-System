@@ -695,32 +695,68 @@ async function captureAndProcess(side, classId, camType) {
     const camUrl = side === 'in' ? inCamUrl : outCamUrl;
     const isIPCamera = camUrl && /^https?:\/\//i.test(camUrl.trim());
 
+    if (!currentSessionId) return;
+
     let results = [];
 
     if (isIPCamera) {
-        // Bypass client-side canvas capture due to CORS/tainted-canvas restriction
-        try {
-            const res = await fetch('/api/sessions/process-ip-camera-frame', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    session_id: currentSessionId,
-                    camera_url: camUrl,
-                    class_id: classId
-                })
-            });
-            const data = await res.json();
-            if (!data.success) {
-                console.warn(`Server failed to process IP camera frame for ${side}:`, data.detail);
+        // ── IP / MJPEG Camera ──────────────────────────────────────────
+        //  Strategy: browser fetches a JPEG snapshot from the camera
+        //  directly (browser is on same LAN as camera) and converts raw
+        //  bytes → base64 WITHOUT touching a canvas, bypassing the
+        //  CORS tainted-canvas SecurityError entirely.
+        //  Then send to the standard process-frame endpoint.
+        //
+        //  Falls back to server-side grab if browser fetch fails
+        //  (e.g. camera not reachable from browser for some reason).
+        // ────────────────────────────────────────────────────────────────
+        const base64 = await fetchIPCameraFrame(camUrl);
+        if (!base64) {
+            // Browser can't reach camera — try server-side grab as fallback
+            // (only works if server is on same LAN as camera)
+            try {
+                const res = await fetch('/api/sessions/process-ip-camera-frame', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: currentSessionId,
+                        camera_url: camUrl,
+                        class_id:   classId
+                    })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    console.warn(`IP cam fallback (server-side) also failed for ${side}:`, data.detail);
+                    return;
+                }
+                results = data.results || [];
+            } catch (err) {
+                console.error(`IP cam server-side fallback error (${side}):`, err);
                 return;
             }
-            results = data.results || [];
-        } catch (err) {
-            console.error(`Error processing IP camera frame on server side (${side}):`, err);
-            return;
+        } else {
+            // Browser fetch succeeded — send base64 to standard process-frame
+            try {
+                const res = await fetch('/api/sessions/process-frame', {
+                    method : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body   : JSON.stringify({
+                        session_id  : currentSessionId,
+                        image_base64: base64
+                    })
+                });
+                const data = await res.json();
+                if (!data.success) return;
+                results = data.results || [];
+            } catch (err) {
+                console.error(`process-frame error from IP cam frame (${side}):`, err);
+                return;
+            }
         }
     } else {
-        // Local webcam or HLS stream - process using client-side canvas extraction
+        // ── Local webcam or HLS video stream ─────────────────────────────
+        //  Canvas capture is safe here (same-origin or MediaStream source).
+        // ────────────────────────────────────────────────────────────────
         let base64 = null;
         if (video.style.display !== 'none' && video.videoWidth > 0) {
             const offscreen = document.createElement('canvas');
@@ -736,7 +772,7 @@ async function captureAndProcess(side, classId, camType) {
             base64 = offscreen.toDataURL('image/jpeg', 0.8);
         }
 
-        if (!base64 || !currentSessionId) return;
+        if (!base64) return;
 
         try {
             const res  = await fetch('/api/sessions/process-frame', {
@@ -755,8 +791,6 @@ async function captureAndProcess(side, classId, camType) {
             return;
         }
     }
-
-    if (!currentSessionId) return;
 
     try {
         // Render bounding boxes on the overlay canvas
@@ -792,7 +826,66 @@ async function captureAndProcess(side, classId, camType) {
     }
 }
 
+// ─────────────────────────────────────────────────────────
+//  IP CAMERA FRAME FETCH (client-side, avoids CORS canvas taint)
+//
+//  The browser fetches a JPEG snapshot byte-for-byte using
+//  fetch() and converts to base64 WITHOUT a canvas, so no
+//  SecurityError / tainted-canvas problem.
+//
+//  Most IP camera apps expose a /shot.jpg snapshot endpoint:
+//   • Android "IP Webcam" app: http://ip:port/shot.jpg
+//   • Many CCTV HTTP servers:  http://ip:port/snapshot.cgi
+//
+//  If /shot.jpg isn't available, we try the raw stream URL.
+// ─────────────────────────────────────────────────────────
+function getSnapshotUrl(streamUrl) {
+    try {
+        const u = new URL(streamUrl.trim());
+        u.pathname = '/shot.jpg';
+        u.search   = `_t=${Date.now()}`;  // cache-bust every call
+        return u.toString();
+    } catch {
+        return streamUrl;
+    }
+}
+
+async function bufferToBase64Jpeg(buffer) {
+    const bytes  = new Uint8Array(buffer);
+    let binary   = '';
+    const CHUNK  = 8192;  // convert in chunks to avoid stack overflow on large frames
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    }
+    return 'data:image/jpeg;base64,' + btoa(binary);
+}
+
+async function fetchIPCameraFrame(camUrl) {
+    // 1️⃣  Try the JPEG snapshot endpoint (/shot.jpg) — fastest, single frame
+    const snapshotUrl = getSnapshotUrl(camUrl);
+    try {
+        const res = await fetch(snapshotUrl, { mode: 'cors', cache: 'no-store' });
+        if (res.ok) return await bufferToBase64Jpeg(await res.arrayBuffer());
+    } catch (err) {
+        console.warn(`/shot.jpg fetch failed (${snapshotUrl}):`, err.message);
+    }
+
+    // 2️⃣  Fallback: try the original stream URL directly
+    //     Some cameras serve a single JPEG at the root path
+    try {
+        const cacheUrl = camUrl + (camUrl.includes('?') ? '&' : '?') + `_t=${Date.now()}`;
+        const res = await fetch(cacheUrl, { mode: 'cors', cache: 'no-store' });
+        if (res.ok) return await bufferToBase64Jpeg(await res.arrayBuffer());
+    } catch (err) {
+        console.warn(`Direct stream URL fetch failed (${camUrl}):`, err.message);
+    }
+
+    // 3️⃣  Both failed — caller will try server-side grab as last resort
+    return null;
+}
+
 function renderOverlay(side, results, video, img) {
+
     const canvas = document.getElementById(`${side}-canvas`);
     let w = 0, h = 0;
 
