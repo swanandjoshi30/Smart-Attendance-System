@@ -83,6 +83,9 @@ ON CONFLICT (username) DO NOTHING;
 -- Alter existing tables if they already exist
 ALTER TABLE AttendanceLog ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES Sessions(session_id) ON DELETE CASCADE;
 ALTER TABLE AttendanceLog ADD COLUMN IF NOT EXISTS presence_percentage FLOAT DEFAULT 0.0;
+ALTER TABLE Classes ADD COLUMN IF NOT EXISTS in_camera_url TEXT;
+ALTER TABLE Classes ADD COLUMN IF NOT EXISTS out_camera_url TEXT;
+
 
 INSERT INTO Subjects (subject_name, subject_code, semester) VALUES
 ('Engineering Mathematics-I', 'BSC-101-BES', 1),
