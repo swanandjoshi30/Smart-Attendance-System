@@ -16,11 +16,15 @@ from database_manager import DatabaseManager
 from face_recognition_engine import FaceRecognitionEngine
 from email_sender import send_low_attendance_warning, send_session_attendance_notification
 
+import camera_routes
+
 app = FastAPI(
     title="Attendance System API V2",
     description="Backend API for Web-based Face Recognition Attendance System",
     version="2.0.0"
 )
+
+app.include_router(camera_routes.router, prefix="/api")
 
 # Enable CORS for frontend flexibility
 app.add_middleware(

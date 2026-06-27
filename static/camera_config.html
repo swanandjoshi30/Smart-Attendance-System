@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Setup - EduVision</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body { overflow: auto; }
+
+        .page-wrapper {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+        }
+
+        /* ── Sidebar ── */
+        .sidebar {
+            width: 220px;
+            flex-shrink: 0;
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            border-right: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 16px;
+            gap: 8px;
+        }
+        .sidebar .logo {
+            display: flex; align-items: center; gap: 10px;
+            padding: 0 8px 20px;
+            border-bottom: 1px solid var(--glass-border);
+            margin-bottom: 8px;
+        }
+        .sidebar .logo h2 { font-size: 18px; }
+        .sidebar a {
+            display: block; padding: 10px 14px; border-radius: 10px;
+            color: var(--text-secondary); text-decoration: none;
+            font-size: 14px; font-weight: 500; transition: all .2s;
+        }
+        .sidebar a:hover, .sidebar a.active {
+            background: rgba(58,134,200,.15);
+            color: var(--accent-blue-hover);
+        }
+        .sidebar-footer {
+            margin-top: auto; padding-top: 16px;
+            border-top: 1px solid var(--glass-border);
+        }
+        .sidebar-footer .user-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+        .sidebar-footer .user-info { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+
+        /* ── Main ── */
+        .main { flex: 1; overflow-y: auto; padding: 28px; display: flex; flex-direction: column; gap: 20px; }
+
+        .page-header h1 { font-size: 26px; font-weight: 700; }
+        .page-header p  { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
+
+        /* ── Cards ── */
+        .card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 24px;
+        }
+        .section-title { font-size: 15px; font-weight: 600; margin-bottom: 18px; }
+
+        /* ── Form ── */
+        .form-group { margin-bottom: 18px; }
+        .form-group label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
+        .form-group input, .form-group select {
+            width: 100%;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--glass-border);
+            color: var(--text-primary);
+            padding: 11px 14px;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: border .2s;
+        }
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+        .form-group select option { background: var(--bg-secondary); }
+        .help-text { font-size: 12px; color: var(--text-secondary); margin-top: 5px; }
+
+        /* ── Buttons ── */
+        .btn { padding: 10px 22px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all .2s; display:inline-flex;align-items:center;gap:6px; }
+        .btn-primary  { background: var(--accent-blue); color: white; }
+        .btn-primary:hover  { background: var(--accent-blue-hover); transform: translateY(-1px); }
+        .btn-secondary { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.14); }
+        .btn-sm { padding: 7px 14px; font-size: 12px; }
+        .btn:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
+
+        /* ── Status ── */
+        .form-status {
+            margin-top: 14px;
+            padding: 11px 16px;
+            border-radius: 10px;
+            font-size: 13px;
+            display: none;
+        }
+        .form-status.success { background: rgba(16,185,129,.12); color: #10b981; border: 1px solid rgba(16,185,129,.3); display:block; }
+        .form-status.error   { background: rgba(239,68,68,.12);  color: #ef4444; border: 1px solid rgba(239,68,68,.3);  display:block; }
+
+        /* ── Camera preview grid ── */
+        .preview-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+            margin-top: 20px;
+        }
+        @media (max-width: 800px) { .preview-grid { grid-template-columns: 1fr; } }
+
+        .preview-box {
+            position: relative;
+            background: #070e1f;
+            border-radius: 14px;
+            overflow: hidden;
+            aspect-ratio: 4/3;
+            border: 1px solid var(--glass-border);
+        }
+        .preview-box video,
+        .preview-box img.preview-feed {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+        }
+        .preview-label {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0,0,0,.72);
+            color: #fff; padding: 4px 12px;
+            border-radius: 6px; font-size: 12px; font-weight: 600;
+            letter-spacing: .5px; z-index: 10;
+        }
+        .preview-label.entry { border-left: 3px solid #10b981; }
+        .preview-label.exit  { border-left: 3px solid #f59e0b; }
+        .preview-placeholder {
+            position: absolute; inset: 0;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 8px; color: var(--text-secondary); font-size: 13px;
+        }
+        .preview-placeholder .icon { font-size: 36px; opacity: .35; }
+        .preview-status {
+            position: absolute; bottom: 10px; right: 10px;
+            background: rgba(0,0,0,.7); padding: 3px 10px;
+            border-radius: 6px; font-size: 11px; color: var(--text-secondary);
+            z-index: 10;
+        }
+        .preview-status.ok { color: #10b981; }
+
+        /* ── Tips box ── */
+        .tip-box {
+            background: rgba(58,134,200,.08);
+            border: 1px solid rgba(58,134,200,.25);
+            border-radius: 12px;
+            padding: 16px 20px;
+        }
+        .tip-box h3 { font-size: 14px; color: var(--accent-blue-hover); margin-bottom: 10px; }
+        .tip-box ul { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+        .tip-box li { font-size: 13px; color: var(--text-secondary); display: flex; gap: 8px; }
+        .tip-box li::before { content: "→"; color: var(--accent-blue); flex-shrink: 0; }
+
+        /* ── Flex helpers ── */
+        .flex { display: flex; }
+        .gap { gap: 12px; }
+        .align-center { align-items: center; }
+        .flex-wrap { flex-wrap: wrap; }
+        .text-secondary { color: var(--text-secondary); }
+    </style>
+</head>
+<body>
+<div class="page-wrapper">
+
+    <!-- ── Sidebar ── -->
+    <nav class="sidebar">
+        <div class="logo">
+            <span style="font-size:22px">👁️</span>
+            <h2>EduVision</h2>
+        </div>
+        <a href="index.html">🏠 Dashboard</a>
+        <a href="session.html">🎥 Live Session</a>
+        <a href="camera_config.html" class="active">⚙️ Camera Setup</a>
+
+        <div class="sidebar-footer">
+            <div class="user-info">Logged in as</div>
+            <div class="user-name" id="sidebar-user">—</div>
+            <button class="btn btn-secondary" style="width:100%;margin-top:10px;font-size:12px" onclick="app.logout()">🚪 Logout</button>
+        </div>
+    </nav>
+
+    <!-- ── Main ── -->
+    <main class="main">
+
+        <div class="page-header">
+            <h1>Camera Setup</h1>
+            <p>Configure the In-Camera (entry) and Out-Camera (exit) for each classroom. Settings persist per class.</p>
+        </div>
+
+        <!-- ── Config form ── -->
+        <div class="card">
+            <div class="section-title">📹 Classroom Camera Configuration</div>
+            <form id="config-form" autocomplete="off">
+
+                <div class="form-group">
+                    <label>Classroom</label>
+                    <select id="class-sel" required>
+                        <option value="">Loading classes…</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>In-Camera URL <span style="color:var(--text-secondary);font-weight:400">(Entry — marks student arrived)</span></label>
+                    <div class="flex gap align-center">
+                        <input type="text" id="in-url" placeholder="Leave blank = local webcam  |  http://ip:port/video  |  https://...">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-preview-in">👁 Preview</button>
+                    </div>
+                    <p class="help-text">Local webcam (blank), MJPEG HTTP stream (http://...), or an IP camera's MJPEG endpoint.</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Out-Camera URL <span style="color:var(--text-secondary);font-weight:400">(Exit — marks student left)</span></label>
+                    <div class="flex gap align-center">
+                        <input type="text" id="out-url" placeholder="Leave blank = second webcam  |  http://ip:port/video  |  https://...">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-preview-out">👁 Preview</button>
+                    </div>
+                    <p class="help-text">Can be a different device or second IP camera placed near the exit.</p>
+                </div>
+
+                <div class="flex gap flex-wrap">
+                    <button type="submit" class="btn btn-primary" id="btn-save">💾 Save Configuration</button>
+                    <button type="button" class="btn btn-secondary" id="btn-preview-both">▶ Preview Both Cameras</button>
+                </div>
+
+                <div id="form-status" class="form-status"></div>
+            </form>
+
+            <!-- ── Live Preview ── -->
+            <div id="preview-section" style="display:none">
+                <div class="section-title" style="margin-top:24px">📡 Live Preview</div>
+                <div class="preview-grid">
+                    <div>
+                        <div class="preview-box" id="in-box">
+                            <div class="preview-label entry">IN-CAMERA · Entry</div>
+                            <div class="preview-placeholder" id="in-ph">
+                                <div class="icon">📷</div><span>Connecting…</span>
+                            </div>
+                            <video id="in-video" autoplay playsinline muted style="display:none"></video>
+                            <img id="in-img" class="preview-feed" alt="" style="display:none">
+                            <div class="preview-status" id="in-stat">Initialising…</div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="preview-box" id="out-box">
+                            <div class="preview-label exit">OUT-CAMERA · Exit</div>
+                            <div class="preview-placeholder" id="out-ph">
+                                <div class="icon">📷</div><span>Connecting…</span>
+                            </div>
+                            <video id="out-video" autoplay playsinline muted style="display:none"></video>
+                            <img id="out-img" class="preview-feed" alt="" style="display:none">
+                            <div class="preview-status" id="out-stat">Initialising…</div>
+                        </div>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" style="margin-top:12px" id="btn-stop-preview">⏹ Stop Preview</button>
+            </div>
+        </div>
+
+        <!-- ── Tips ── -->
+        <div class="tip-box">
+            <h3>💡 Camera URL Guide</h3>
+            <ul>
+                <li><strong>Blank (local webcam):</strong> Uses the browser's default camera (or second camera for out-cam).</li>
+                <li><strong>IP Camera (MJPEG):</strong> Most IP cameras expose an HTTP MJPEG stream — use <code>http://192.168.x.x/video</code> or similar.</li>
+                <li><strong>Mobile phone:</strong> Install an IP Webcam app (e.g. "IP Webcam" on Android). Use the MJPEG URL it provides.</li>
+                <li><strong>CCTV / NVR:</strong> Many support RTSP. Use an RTSP-to-MJPEG proxy (e.g. go2rtc) and enter the resulting HTTP URL here.</li>
+                <li><strong>Testing:</strong> Run one camera on your laptop (blank) and another on a mobile (HTTP URL). Both will show in the session view.</li>
+            </ul>
+        </div>
+
+    </main>
+</div>
+
+<!-- app.js must be first for `app` proxy -->
+<script src="app.js"></script>
+<script>
+// ── Active preview streams ──
+let previewStreams = {};  // 'in' | 'out' → MediaStream
+
+document.addEventListener('DOMContentLoaded', async () => {
+    // Auth guard
+    if (!app.token) { window.location.href = 'index.html'; return; }
+    const user = app.user;
+    document.getElementById('sidebar-user').textContent = user ? user.name : 'Unknown';
+
+    // Load classes
+    await loadClasses();
+
+    // Event listeners
+    document.getElementById('class-sel').addEventListener('change', onClassChange);
+    document.getElementById('config-form').addEventListener('submit', saveConfig);
+    document.getElementById('btn-preview-both').addEventListener('click', previewBoth);
+    document.getElementById('btn-preview-in').addEventListener('click', () => previewOne('in'));
+    document.getElementById('btn-preview-out').addEventListener('click', () => previewOne('out'));
+    document.getElementById('btn-stop-preview').addEventListener('click', stopAllPreviews);
+});
+
+// ── Load classes into dropdown ──
+async function loadClasses() {
+    try {
+        const res     = await fetch('/api/classes');
+        const classes = await res.json();
+        const sel     = document.getElementById('class-sel');
+        sel.innerHTML = '<option value="">Select a classroom…</option>';
+        classes.forEach(c => sel.add(new Option(c.name, c.id)));
+    } catch (err) {
+        console.error('Failed to load classes', err);
+    }
+}
+
+// ── Load saved config when class changes ──
+async function onClassChange(e) {
+    const classId = e.target.value;
+    if (!classId) return;
+    document.getElementById('form-status').className = 'form-status';
+
+    try {
+        const res = await fetch(`/api/classes/${classId}/cameras`);
+        if (res.ok) {
+            const data = await res.json();
+            document.getElementById('in-url').value  = data.in_camera_url  || '';
+            document.getElementById('out-url').value = data.out_camera_url || '';
+        }
+    } catch (err) {
+        console.error('Failed to fetch camera config', err);
+    }
+
+    // Stop any running previews when switching class
+    stopAllPreviews();
+}
+
+// ── Save config ──
+async function saveConfig(e) {
+    e.preventDefault();
+    const classId = document.getElementById('class-sel').value;
+    const inUrl   = document.getElementById('in-url').value.trim();
+    const outUrl  = document.getElementById('out-url').value.trim();
+    const status  = document.getElementById('form-status');
+
+    if (!classId) {
+        status.textContent = 'Please select a classroom first.';
+        status.className   = 'form-status error';
+        return;
+    }
+
+    const btn = document.getElementById('btn-save');
+    btn.disabled    = true;
+    btn.textContent = 'Saving…';
+
+    try {
+        const res  = await fetch(`/api/classes/${classId}/cameras`, {
+            method : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body   : JSON.stringify({ in_camera_url: inUrl, out_camera_url: outUrl })
+        });
+        const data = await res.json();
+
+        if (!res.ok) throw new Error(data.detail || 'Save failed');
+
+        status.textContent = '✓ Camera configuration saved successfully.';
+        status.className   = 'form-status success';
+    } catch (err) {
+        status.textContent = `✗ Error: ${err.message}`;
+        status.className   = 'form-status error';
+    } finally {
+        btn.disabled    = false;
+        btn.textContent = '💾 Save Configuration';
+    }
+}
+
+// ── Preview helpers ──
+async function previewBoth() {
+    const inUrl  = document.getElementById('in-url').value.trim();
+    const outUrl = document.getElementById('out-url').value.trim();
+    document.getElementById('preview-section').style.display = 'block';
+    await startPreview('in',  inUrl);
+    await startPreview('out', outUrl);
+}
+
+async function previewOne(side) {
+    const url = document.getElementById(`${side}-url`).value.trim();
+    document.getElementById('preview-section').style.display = 'block';
+    await startPreview(side, url);
+}
+
+async function startPreview(side, url) {
+    const video   = document.getElementById(`${side}-video`);
+    const img     = document.getElementById(`${side}-img`);
+    const ph      = document.getElementById(`${side}-ph`);
+    const statEl  = document.getElementById(`${side}-stat`);
+
+    // Reset
+    video.style.display = 'none';
+    img.style.display   = 'none';
+    ph.style.display    = 'flex';
+    ph.innerHTML        = '<div class="icon">📷</div><span>Connecting…</span>';
+    statEl.textContent  = 'Initialising…';
+    statEl.className    = 'preview-status';
+
+    // Stop existing stream
+    if (previewStreams[side]) {
+        previewStreams[side].getTracks().forEach(t => t.stop());
+        delete previewStreams[side];
+        video.srcObject = null;
+    }
+
+    const isWebcam = !url || url === '0' || url === 'local' || url === 'webcam';
+    const isHttp   = /^https?:\/\//i.test(url);
+
+    if (isWebcam) {
+        try {
+            let constraints = { video: true };
+            if (side === 'out') {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const cams    = devices.filter(d => d.kind === 'videoinput');
+                if (cams.length >= 2) {
+                    constraints = { video: { deviceId: { exact: cams[1].deviceId } } };
+                }
+            }
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            previewStreams[side] = stream;
+            video.srcObject      = stream;
+            video.style.display  = 'block';
+            ph.style.display     = 'none';
+            statEl.textContent   = '● Live (local webcam)';
+            statEl.className     = 'preview-status ok';
+        } catch (err) {
+            ph.innerHTML         = '<div class="icon">🚫</div><span>Camera permission denied</span>';
+            statEl.textContent   = '✗ Permission denied';
+        }
+    } else if (isHttp) {
+        img.src             = url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
+        img.style.display   = 'block';
+        ph.style.display    = 'none';
+        statEl.textContent  = '● Streaming';
+        statEl.className    = 'preview-status ok';
+        img.onerror = () => {
+            img.style.display  = 'none';
+            ph.style.display   = 'flex';
+            ph.innerHTML       = '<div class="icon">⚠️</div><span>Stream unavailable — check the URL</span>';
+            statEl.textContent = '✗ No signal';
+            statEl.className   = 'preview-status';
+        };
+    } else {
+        // Try <video src> (HLS etc.)
+        video.src           = url;
+        video.style.display = 'block';
+        ph.style.display    = 'none';
+        statEl.textContent  = '● Connecting…';
+        video.oncanplay = () => {
+            statEl.textContent = '● Live';
+            statEl.className   = 'preview-status ok';
+        };
+        video.onerror = () => {
+            video.style.display = 'none';
+            ph.style.display    = 'flex';
+            ph.innerHTML        = '<div class="icon">⚠️</div><span>Could not connect — check URL format</span>';
+            statEl.textContent  = '✗ Stream error';
+            statEl.className    = 'preview-status';
+        };
+    }
+}
+
+function stopAllPreviews() {
+    ['in', 'out'].forEach(side => {
+        const video = document.getElementById(`${side}-video`);
+        const img   = document.getElementById(`${side}-img`);
+        if (previewStreams[side]) {
+            previewStreams[side].getTracks().forEach(t => t.stop());
+            delete previewStreams[side];
+        }
+        video.srcObject    = null;
+        video.style.display = 'none';
+        img.style.display  = 'none';
+        document.getElementById(`${side}-ph`).style.display = 'flex';
+        document.getElementById(`${side}-ph`).innerHTML     = '<div class="icon">📷</div><span>Preview stopped</span>';
+        document.getElementById(`${side}-stat`).textContent = 'Stopped';
+        document.getElementById(`${side}-stat`).className   = 'preview-status';
+    });
+    document.getElementById('preview-section').style.display = 'none';
+}
+</script>
+</body>
+</html>

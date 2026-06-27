@@ -471,7 +471,7 @@ class DatabaseManager:
                 conn.commit()
 
     def end_session(self, session_id):
-        """Ends the session, computes attendance percentages using time binning, logs final records, and returns results"""
+        """Ends the session, computes attendance percentages using interval merging, logs final records, and returns results"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 # 1. Update session end_time and status
@@ -482,74 +482,40 @@ class DatabaseManager:
                 session_info = cur.fetchone()
                 if not session_info:
                     return False, "Session not found", []
-                
+
                 class_id, subject_id, start_time, end_time = session_info
-                
-                import math
-                # 2. Get session duration in seconds
-                duration_seconds = (end_time - start_time).total_seconds()
-                if duration_seconds <= 0:
-                    duration_seconds = 1
-                
-                # Total 1-minute bins
-                total_bins = float(max(1, math.ceil(duration_seconds / 60.0)))
-                
-                # 3. Fetch all students in this class
+
+                # Fetch all students in this class
                 cur.execute(
                     "SELECT prn_no, name, roll_no, email FROM Students WHERE class_id = %s ORDER BY roll_no",
                     (class_id,)
                 )
                 students = cur.fetchall()
-                
-                # 4. Fetch all detections for this session
-                cur.execute(
-                    "SELECT prn_no, timestamp FROM SessionDetections WHERE session_id = %s ORDER BY timestamp",
-                    (session_id,)
-                )
-                detections = cur.fetchall()
-                
-                # Map student PRN to their list of detection timestamps
-                student_detections = {student[0]: [] for student in students}
-                for prn, timestamp in detections:
-                    if prn in student_detections:
-                        student_detections[prn].append(timestamp)
-                
+
                 results = []
-                # 5. Calculate presence percentage for each student
+                session_date = start_time.date()
+
                 for prn, name, roll_no, email in students:
-                    times = student_detections[prn]
-                    if not times:
-                        presence_percentage = 0.0
-                    else:
-                        # Find unique 1-minute bins in which the student was detected
-                        bins_seen = set()
-                        for t in times:
-                            delta_seconds = (t - start_time).total_seconds()
-                            bin_idx = int(delta_seconds // 60)
-                            bins_seen.add(bin_idx)
-                        
-                        # Number of bins where student was present
-                        seen_bins_count = len(bins_seen)
-                        presence_percentage = float((seen_bins_count / total_bins) * 100.0)
-                        presence_percentage = float(min(100.0, presence_percentage))
-                    
-                    status = "present" if presence_percentage >= 70.0 else "absent"
-                    
-                    # 6. Log the final attendance status to AttendanceLog
+                    # Use same connection to avoid pool exhaustion
+                    presence_percentage, status = self._calculate_presence_with_conn(
+                        conn, class_id, prn, session_date, start_time, end_time, threshold=75.0
+                    )
+
+                    # Log the final attendance status to AttendanceLog
                     cur.execute(
                         "INSERT INTO AttendanceLog (prn_no, subject_id, session_id, timestamp, presence_percentage, status) VALUES (%s, %s, %s, %s, %s, %s)",
                         (prn, subject_id, session_id, end_time, presence_percentage, status)
                     )
-                    
+
                     results.append({
                         "prn": prn,
                         "name": name,
                         "roll_no": roll_no,
                         "email": email,
-                        "presence_percentage": round(presence_percentage, 1),
+                        "presence_percentage": presence_percentage,
                         "status": status
                     })
-                
+
                 conn.commit()
                 return True, "Session ended and attendance processed successfully", results
 
@@ -601,7 +567,126 @@ class DatabaseManager:
                     return [dict(zip(colnames, row)) for row in rows]
                 return []
 
+    def set_camera_urls(self, class_id, in_url, out_url):
+        """Set the in and out camera URLs for a classroom."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE Classes SET in_camera_url = %s, out_camera_url = %s WHERE class_id = %s",
+                    (in_url, out_url, class_id)
+                )
+                conn.commit()
+
+    def record_entry(self, class_id, student_id, entry_time, session_date):
+        """Record entry time for a student (in-camera). Skips if an open entry already exists."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Guard: only insert if no open entry exists for this student today
+                cur.execute(
+                    "SELECT record_id FROM AttendanceInOut WHERE class_id = %s AND student_id = %s AND session_date = %s AND exit_time IS NULL LIMIT 1",
+                    (class_id, student_id, session_date)
+                )
+                existing = cur.fetchone()
+                if existing:
+                    # Already has an open entry — student is currently inside, do nothing
+                    return existing[0]  # return existing record_id
+
+                cur.execute(
+                    "INSERT INTO AttendanceInOut (class_id, student_id, entry_time, session_date) VALUES (%s, %s, %s, %s) RETURNING record_id",
+                    (class_id, student_id, entry_time, session_date)
+                )
+                record_id = cur.fetchone()[0]
+                conn.commit()
+                return record_id
+
+
+    def record_exit(self, record_id, exit_time):
+        """Record exit time for a student (out-camera)."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE AttendanceInOut SET exit_time = %s WHERE record_id = %s",
+                    (exit_time, record_id)
+                )
+                conn.commit()
+
+    def merge_intervals(self, intervals, max_gap_seconds=300):
+        """Merge overlapping intervals or intervals separated by less than max_gap_seconds."""
+        if not intervals:
+            return []
+
+        # Sort intervals by start time
+        intervals.sort(key=lambda x: x[0])
+
+        merged = [intervals[0]]
+        for current in intervals[1:]:
+            last = merged[-1]
+            last_start, last_end = last
+            current_start, current_end = current
+
+            # If gap between end of last and start of current is within tolerance, merge
+            gap = (current_start - last_end).total_seconds()
+            if gap <= max_gap_seconds:
+                merged[-1] = (last_start, max(last_end, current_end))
+            else:
+                merged.append(current)
+
+        return merged
+
+    def _calculate_presence_with_conn(self, conn, class_id, student_id, session_date, session_start, session_end, threshold=75.0):
+        """Calculate presence using an already-open DB connection (used inside transactions)."""
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT entry_time, exit_time FROM AttendanceInOut WHERE class_id = %s AND student_id = %s AND session_date = %s",
+                (class_id, student_id, session_date)
+            )
+            records = cur.fetchall()
+
+        if not records:
+            return 0.0, "absent"
+
+        intervals = []
+        for entry, exit_t in records:
+            if not exit_t:
+                exit_t = session_end
+            intervals.append((entry, exit_t))
+
+        merged_intervals = self.merge_intervals(intervals)
+
+        total_present_seconds = 0
+        for start, end in merged_intervals:
+            actual_start = max(start, session_start)
+            actual_end = min(end, session_end)
+            if actual_end > actual_start:
+                total_present_seconds += (actual_end - actual_start).total_seconds()
+
+        session_duration = (session_end - session_start).total_seconds()
+        if session_duration <= 0:
+            return 0.0, "absent"
+
+        presence_percentage = min(100.0, (total_present_seconds / session_duration) * 100.0)
+        status = "present" if presence_percentage >= threshold else "absent"
+        return round(presence_percentage, 1), status
+
+    def calculate_presence(self, class_id, student_id, session_date, session_start, session_end, threshold=75.0):
+        """Calculate presence percentage based on in/out timestamps and short-break merging."""
+        with self.get_connection() as conn:
+            return self._calculate_presence_with_conn(conn, class_id, student_id, session_date, session_start, session_end, threshold)
+
+    def get_latest_open_entry(self, class_id, student_id):
+        """Return the record_id of the most recent AttendanceInOut entry for the student where exit_time is NULL."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT record_id FROM AttendanceInOut WHERE class_id = %s AND student_id = %s AND exit_time IS NULL ORDER BY entry_time DESC LIMIT 1",
+                    (class_id, student_id)
+                )
+                row = cur.fetchone()
+                return row[0] if row else None
+
     def close(self):
         """Close all connections in the pool"""
         self.connection_pool.closeall()
+
+
 

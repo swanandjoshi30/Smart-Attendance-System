@@ -6,6 +6,22 @@ let currentToken = null;
 let classes = [];
 let subjects = [];
 
+// Global app proxy — used by standalone pages (session.html, camera_config.html)
+// that load app.js but need token/user access without the full SPA context.
+const app = {
+    get token() {
+        return localStorage.getItem("token") || null;
+    },
+    get user() {
+        try { return JSON.parse(localStorage.getItem("user")) || null; } catch { return null; }
+    },
+    logout() {
+        localStorage.removeItem("user");
+        localStorage.removeItem("token");
+        window.location.href = "index.html";
+    }
+};
+
 // Session state
 let activeSessionId = null;
 let sessionTimerInterval = null;

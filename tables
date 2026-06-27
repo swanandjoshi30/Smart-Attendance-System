@@ -2,7 +2,9 @@
 CREATE TABLE IF NOT EXISTS Classes (
     class_id SERIAL PRIMARY KEY,
     class_name VARCHAR(100) UNIQUE NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    in_camera_url TEXT,
+    out_camera_url TEXT
 );
 CREATE TABLE IF NOT EXISTS Subjects (
     subject_id SERIAL PRIMARY KEY,
@@ -103,3 +105,13 @@ INSERT INTO Classes (class_name) VALUES
     ('Computer Science - COMP 2'),
     ('Computer Science - COMP 3')
 ON CONFLICT (class_name) DO NOTHING;
+
+-- New table for in/out attendance intervals
+CREATE TABLE IF NOT EXISTS AttendanceInOut (
+    record_id SERIAL PRIMARY KEY,
+    class_id INTEGER REFERENCES Classes(class_id) ON DELETE CASCADE,
+    student_id VARCHAR(20) REFERENCES Students(prn_no) ON DELETE CASCADE,
+    entry_time TIMESTAMP NOT NULL,
+    exit_time TIMESTAMP,
+    session_date DATE NOT NULL
+);

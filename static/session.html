@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Session - EduVision</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* ── Page-level layout ── */
+        body { overflow: auto; }
+
+        .page-wrapper {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+        }
+
+        /* ── Sidebar ── */
+        .sidebar {
+            width: 220px;
+            flex-shrink: 0;
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            border-right: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 16px;
+            gap: 8px;
+        }
+        .sidebar .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 0 8px 20px;
+            border-bottom: 1px solid var(--glass-border);
+            margin-bottom: 8px;
+        }
+        .sidebar .logo h2 { font-size: 18px; color: var(--text-primary); }
+        .sidebar .logo-icon { font-size: 22px; }
+
+        .sidebar a {
+            display: block;
+            padding: 10px 14px;
+            border-radius: 10px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all .2s;
+        }
+        .sidebar a:hover, .sidebar a.active {
+            background: rgba(58, 134, 200, 0.15);
+            color: var(--accent-blue-hover);
+        }
+
+        .sidebar-footer {
+            margin-top: auto;
+            padding-top: 16px;
+            border-top: 1px solid var(--glass-border);
+        }
+        .sidebar-footer .user-info { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+        .sidebar-footer .user-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+
+        /* ── Main content ── */
+        .main { flex: 1; overflow-y: auto; padding: 28px; display: flex; flex-direction: column; gap: 20px; }
+
+        .page-header h1 { font-size: 26px; font-weight: 700; }
+        .page-header p { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
+
+        /* ── Cards ── */
+        .card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 20px 24px;
+        }
+
+        /* ── Control row ── */
+        .control-row {
+            display: flex;
+            gap: 14px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .control-row select, .control-row input {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--glass-border);
+            color: var(--text-primary);
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 14px;
+            flex: 1;
+            min-width: 160px;
+        }
+        .control-row select option { background: var(--bg-secondary); }
+
+        /* ── Buttons ── */
+        .btn { padding: 10px 22px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all .2s; }
+        .btn-primary { background: var(--accent-blue); color: white; }
+        .btn-primary:hover { background: var(--accent-blue-hover); transform: translateY(-1px); }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-danger:hover { opacity: .85; transform: translateY(-1px); }
+        .btn-secondary { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.14); }
+        .btn:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
+
+        /* ── Session info bar ── */
+        .session-bar {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .session-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .session-badge.active { background: rgba(16,185,129,.15); color: #10b981; border: 1px solid rgba(16,185,129,.3); }
+        .session-badge.inactive { background: rgba(239,68,68,.12); color: #ef4444; border: 1px solid rgba(239,68,68,.25); }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+        .stat-item { text-align: center; }
+        .stat-item .val { font-size: 22px; font-weight: 700; color: var(--text-primary); }
+        .stat-item .lbl { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; }
+
+        /* ── Camera grid ── */
+        .camera-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+        }
+        @media (max-width: 900px) { .camera-grid { grid-template-columns: 1fr; } }
+
+        .cam-box {
+            position: relative;
+            background: #070e1f;
+            border-radius: 14px;
+            overflow: hidden;
+            aspect-ratio: 4/3;
+            border: 1px solid var(--glass-border);
+        }
+        .cam-box video,
+        .cam-box img.mjpeg-feed {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+        }
+        .cam-box canvas.overlay {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+        }
+        .cam-label {
+            position: absolute;
+            top: 10px; left: 10px;
+            background: rgba(0,0,0,.72);
+            color: #fff;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: .5px;
+            z-index: 10;
+        }
+        .cam-label.entry { border-left: 3px solid #10b981; }
+        .cam-label.exit  { border-left: 3px solid #f59e0b; }
+        .cam-status {
+            position: absolute;
+            bottom: 10px; right: 10px;
+            background: rgba(0,0,0,.7);
+            color: var(--text-secondary);
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            z-index: 10;
+        }
+        .cam-status.ok { color: #10b981; }
+        .cam-placeholder {
+            position: absolute; inset: 0;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 8px; color: var(--text-secondary); font-size: 13px;
+        }
+        .cam-placeholder .icon { font-size: 36px; opacity: .4; }
+
+        /* ── Detection log ── */
+        .det-table { width: 100%; border-collapse: collapse; }
+        .det-table th, .det-table td {
+            text-align: left; padding: 11px 14px;
+            border-bottom: 1px solid var(--glass-border);
+            font-size: 13px;
+        }
+        .det-table th { color: var(--text-secondary); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+        .badge-entry { background: rgba(16,185,129,.15); color: #10b981; }
+        .badge-exit  { background: rgba(245,158,11,.15); color: #f59e0b; }
+
+        /* ── Session results modal ── */
+        .modal-backdrop {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,.6); backdrop-filter: blur(6px);
+            z-index: 200; align-items: center; justify-content: center;
+        }
+        .modal-backdrop.open { display: flex; }
+        .modal-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--glass-border);
+            border-radius: 18px;
+            padding: 28px;
+            width: min(680px, 94vw);
+            max-height: 80vh;
+            display: flex; flex-direction: column; gap: 16px;
+            overflow: hidden;
+        }
+        .modal-box h2 { font-size: 20px; }
+        .modal-scroll { overflow-y: auto; flex: 1; }
+        .results-table { width: 100%; border-collapse: collapse; }
+        .results-table th, .results-table td {
+            text-align: left; padding: 10px 12px;
+            border-bottom: 1px solid var(--glass-border);
+            font-size: 13px;
+        }
+        .results-table th { color: var(--text-secondary); font-size: 11px; text-transform: uppercase; }
+        .tag-present { background: rgba(16,185,129,.15); color: #10b981; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+        .tag-absent  { background: rgba(239,68,68,.12); color: #ef4444; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+
+        /* ── Timer ── */
+        #session-timer { font-size: 28px; font-weight: 700; color: var(--accent-blue-hover); font-variant-numeric: tabular-nums; }
+
+        /* ── Toast ── */
+        #toast-container {
+            position: fixed; bottom: 24px; right: 24px;
+            display: flex; flex-direction: column; gap: 10px; z-index: 999;
+        }
+        .toast {
+            background: var(--bg-secondary); border: 1px solid var(--glass-border);
+            border-radius: 10px; padding: 12px 18px; font-size: 13px;
+            box-shadow: 0 8px 24px rgba(0,0,0,.4);
+            animation: slideIn .3s ease;
+        }
+        .toast.success { border-left: 3px solid #10b981; }
+        .toast.error   { border-left: 3px solid #ef4444; }
+        .toast.info    { border-left: 3px solid var(--accent-blue); }
+        @keyframes slideIn { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+        /* ── Misc ── */
+        .section-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; }
+        .text-secondary { color: var(--text-secondary); }
+        .gap-sm { gap: 8px; }
+        .flex { display: flex; }
+        .align-center { align-items: center; }
+        .justify-between { justify-content: space-between; }
+    </style>
+</head>
+<body>
+<div class="page-wrapper">
+
+    <!-- ── Sidebar ── -->
+    <nav class="sidebar">
+        <div class="logo">
+            <span class="logo-icon">👁️</span>
+            <h2>EduVision</h2>
+        </div>
+        <a href="index.html">🏠 Dashboard</a>
+        <a href="session.html" class="active">🎥 Live Session</a>
+        <a href="camera_config.html">⚙️ Camera Setup</a>
+
+        <div class="sidebar-footer">
+            <div class="user-info">Logged in as</div>
+            <div class="user-name" id="sidebar-user">—</div>
+            <button class="btn btn-secondary" style="width:100%;margin-top:10px;font-size:12px" onclick="app.logout()">🚪 Logout</button>
+        </div>
+    </nav>
+
+    <!-- ── Main ── -->
+    <main class="main">
+
+        <!-- Header -->
+        <div class="page-header">
+            <h1>Live Session</h1>
+            <p id="page-subtitle">Configure and start a classroom session with dual-camera attendance.</p>
+        </div>
+
+        <!-- ── Start panel (shown when no session active) ── -->
+        <div class="card" id="start-panel">
+            <div class="section-title">Start a New Session</div>
+            <div class="control-row">
+                <select id="class-sel">
+                    <option value="">Select Class…</option>
+                </select>
+                <select id="subject-sel">
+                    <option value="">Select Subject…</option>
+                </select>
+                <button class="btn btn-primary" id="btn-start">▶ Start Session</button>
+            </div>
+        </div>
+
+        <!-- ── Active session panel (shown when session running) ── -->
+        <div class="card" id="active-panel" style="display:none">
+            <div class="flex align-center justify-between" style="flex-wrap:wrap;gap:14px">
+                <div class="session-bar">
+                    <div class="session-badge active"><span class="dot"></span> LIVE</div>
+                    <div id="session-timer">00:00:00</div>
+                    <div class="stat-item">
+                        <div class="val" id="stat-present">0</div>
+                        <div class="lbl">Present</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="val" id="stat-total">0</div>
+                        <div class="lbl">Students</div>
+                    </div>
+                </div>
+                <button class="btn btn-danger" id="btn-end">⏹ End Session</button>
+            </div>
+            <p class="text-secondary" id="session-label" style="margin-top:10px;font-size:13px"></p>
+        </div>
+
+        <!-- ── Camera feeds ── -->
+        <div class="camera-grid" id="cam-grid" style="display:none">
+            <!-- IN cam -->
+            <div class="card" style="padding:0;overflow:hidden">
+                <div class="cam-box" id="in-cam-box">
+                    <div class="cam-label entry">🟢 IN-CAMERA · Entry</div>
+                    <div class="cam-placeholder" id="in-placeholder">
+                        <div class="icon">📷</div>
+                        <span>Initialising in-camera…</span>
+                    </div>
+                    <!-- video for webcam / device camera -->
+                    <video id="in-video" autoplay playsinline muted style="display:none"></video>
+                    <!-- img for MJPEG / HTTP stream -->
+                    <img id="in-img" class="mjpeg-feed" alt="In-camera feed" style="display:none">
+                    <canvas id="in-canvas" class="overlay"></canvas>
+                    <div class="cam-status" id="in-status">Waiting…</div>
+                </div>
+            </div>
+            <!-- OUT cam -->
+            <div class="card" style="padding:0;overflow:hidden">
+                <div class="cam-box" id="out-cam-box">
+                    <div class="cam-label exit">🟡 OUT-CAMERA · Exit</div>
+                    <div class="cam-placeholder" id="out-placeholder">
+                        <div class="icon">📷</div>
+                        <span>Initialising out-camera…</span>
+                    </div>
+                    <video id="out-video" autoplay playsinline muted style="display:none"></video>
+                    <img id="out-img" class="mjpeg-feed" alt="Out-camera feed" style="display:none">
+                    <canvas id="out-canvas" class="overlay"></canvas>
+                    <div class="cam-status" id="out-status">Waiting…</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Detection log ── -->
+        <div class="card" id="det-card" style="display:none">
+            <div class="flex align-center justify-between" style="margin-bottom:14px">
+                <div class="section-title" style="margin:0">Recent Detections</div>
+                <span id="det-count" class="text-secondary" style="font-size:12px">0 events</span>
+            </div>
+            <table class="det-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>PRN</th>
+                        <th>Camera</th>
+                        <th>Time</th>
+                        <th>Confidence</th>
+                    </tr>
+                </thead>
+                <tbody id="det-body"></tbody>
+            </table>
+        </div>
+
+    </main>
+</div>
+
+<!-- ── Session Results Modal ── -->
+<div class="modal-backdrop" id="results-modal">
+    <div class="modal-box">
+        <div class="flex align-center justify-between">
+            <h2>Session Results</h2>
+            <button class="btn btn-secondary" id="btn-close-results">✕ Close</button>
+        </div>
+        <div class="flex gap-sm" style="gap:20px;flex-wrap:wrap">
+            <div class="stat-item"><div class="val" id="res-present">—</div><div class="lbl">Present</div></div>
+            <div class="stat-item"><div class="val" id="res-absent">—</div><div class="lbl">Absent</div></div>
+            <div class="stat-item"><div class="val" id="res-total">—</div><div class="lbl">Total</div></div>
+        </div>
+        <div class="modal-scroll">
+            <table class="results-table">
+                <thead><tr><th>#</th><th>Name</th><th>PRN</th><th>Presence %</th><th>Status</th></tr></thead>
+                <tbody id="res-body"></tbody>
+            </table>
+        </div>
+        <button class="btn btn-secondary" id="btn-export-csv">⬇ Export CSV</button>
+    </div>
+</div>
+
+<!-- ── Toast container ── -->
+<div id="toast-container"></div>
+
+<!-- app.js must load first for the `app` proxy -->
+<script src="app.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────
+//  SESSION PAGE STATE
+// ─────────────────────────────────────────────────────────
+let currentSessionId  = null;
+let currentClassId    = null;
+let sessionStartedAt  = null;  // Date object
+let timerHandle       = null;
+let detLoopHandle     = null;
+
+// Cooldown tracking: prevent firing entry/exit API for the
+// same student more than once within COOLDOWN_MS milliseconds.
+// Key: `${prn}:${camType}` → timestamp of last API call.
+const ENTRY_COOLDOWN_MS = 10_000; // 10 s between re-logging same student entry
+const EXIT_COOLDOWN_MS  = 10_000;
+const lastCallMap = {};           // key → Date.now()
+
+// Camera stream references
+let inStream  = null;  // MediaStream (webcam)
+let outStream = null;
+
+// Track how many students confirmed present this session
+const presentPrns = new Set();
+let totalStudents  = 0;
+let detEventCount  = 0;
+
+// ─────────────────────────────────────────────────────────
+//  INIT
+// ─────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+    // Auth guard
+    const token = app.token;
+    if (!token) { window.location.href = 'index.html'; return; }
+
+    const user = app.user;
+    document.getElementById('sidebar-user').textContent = user ? user.name : 'Unknown';
+
+    await loadDropdowns();
+    await checkActiveSession();
+
+    document.getElementById('btn-start').addEventListener('click', startSession);
+    document.getElementById('btn-end').addEventListener('click', endSession);
+    document.getElementById('btn-close-results').addEventListener('click', () => {
+        document.getElementById('results-modal').classList.remove('open');
+    });
+    document.getElementById('btn-export-csv').addEventListener('click', exportCSV);
+});
+
+// ─────────────────────────────────────────────────────────
+//  DROPDOWNS
+// ─────────────────────────────────────────────────────────
+async function loadDropdowns() {
+    try {
+        const [clsRes, subRes] = await Promise.all([
+            fetch('/api/classes'),
+            fetch('/api/subjects')
+        ]);
+        const classes  = await clsRes.json();
+        const subjects = await subRes.json();
+
+        const clsSel = document.getElementById('class-sel');
+        const subSel = document.getElementById('subject-sel');
+
+        classes.forEach(c => clsSel.add(new Option(c.name, c.id)));
+        subjects.forEach(s => subSel.add(new Option(s.name, s.id)));
+    } catch (err) {
+        toast('Failed to load classes/subjects', 'error');
+        console.error(err);
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+//  CHECK FOR ALREADY-ACTIVE SESSION (page reload resilience)
+// ─────────────────────────────────────────────────────────
+async function checkActiveSession() {
+    try {
+        const res  = await fetch('/api/sessions/active');
+        const data = await res.json();
+        if (data.session_id) {
+            currentSessionId = data.session_id;
+            currentClassId   = data.class_id;
+            sessionStartedAt = new Date(data.start_time);
+            document.getElementById('session-label').textContent =
+                `${data.class_name}  ·  ${data.subject_name}`;
+            await activateSessionUI(data.class_id);
+        }
+    } catch (err) {
+        console.error('Active session check failed', err);
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+//  START SESSION
+// ─────────────────────────────────────────────────────────
+async function startSession() {
+    const classId   = document.getElementById('class-sel').value;
+    const subjectId = document.getElementById('subject-sel').value;
+
+    if (!classId || !subjectId) {
+        toast('Please select both a class and a subject.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('btn-start');
+    btn.disabled = true;
+    btn.textContent = 'Starting…';
+
+    try {
+        const res  = await fetch('/api/sessions/start', {
+            method : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body   : JSON.stringify({ class_id: +classId, subject_id: +subjectId })
+        });
+        const data = await res.json();
+
+        if (!data.success) throw new Error(data.detail || 'Failed to start session');
+
+        currentSessionId = data.session_id;
+        currentClassId   = +classId;
+        sessionStartedAt = new Date();
+
+        const classText   = document.getElementById('class-sel').selectedOptions[0].text;
+        const subjectText = document.getElementById('subject-sel').selectedOptions[0].text;
+        document.getElementById('session-label').textContent = `${classText}  ·  ${subjectText}`;
+
+        await activateSessionUI(+classId);
+        toast(`Session started: ${classText}`, 'success');
+    } catch (err) {
+        toast(`Error: ${err.message}`, 'error');
+        console.error(err);
+        btn.disabled = false;
+        btn.textContent = '▶ Start Session';
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+//  ACTIVATE UI (cameras, timer, detection loop)
+// ─────────────────────────────────────────────────────────
+async function activateSessionUI(classId) {
+    // Hide start panel, show active panel + cameras
+    document.getElementById('start-panel').style.display  = 'none';
+    document.getElementById('active-panel').style.display = 'block';
+    document.getElementById('cam-grid').style.display     = 'grid';
+    document.getElementById('det-card').style.display     = 'block';
+
+    // Start timer
+    startTimer();
+
+    // Load total student count
+    try {
+        const res = await fetch('/api/students');
+        const all = await res.json();
+        totalStudents = all.filter(s => s.class_id == classId).length ||
+                        all.length; // fallback if class_id not in response
+        document.getElementById('stat-total').textContent = totalStudents;
+    } catch (_) { /* non-critical */ }
+
+    // Fetch camera config for this class then set up feeds
+    try {
+        const res  = await fetch(`/api/classes/${classId}/cameras`);
+        const cfg  = await res.json();
+        await setupCameraFeed('in',  cfg.in_camera_url  || '');
+        await setupCameraFeed('out', cfg.out_camera_url || '');
+    } catch (err) {
+        console.error('Camera config fetch failed', err);
+        // Fall back: both cameras use local webcam
+        await setupCameraFeed('in',  '');
+        await setupCameraFeed('out', '');
+    }
+
+    // Start detection loop
+    startDetectionLoop(classId);
+}
+
+// ─────────────────────────────────────────────────────────
+//  CAMERA SETUP
+//  Strategy:
+//   • empty / "0" / "1" / "front" / "back" → getUserMedia
+//   • http:// or https:// URL               → MJPEG <img> feed
+//   • anything else                         → try <video src> (e.g. HLS)
+// ─────────────────────────────────────────────────────────
+async function setupCameraFeed(side, url) {
+    const video       = document.getElementById(`${side}-video`);
+    const img         = document.getElementById(`${side}-img`);
+    const placeholder = document.getElementById(`${side}-placeholder`);
+    const statusEl    = document.getElementById(`${side}-status`);
+
+    placeholder.style.display = 'flex';
+    video.style.display = 'none';
+    img.style.display   = 'none';
+
+    const isWebcam = !url || url.trim() === '' || url.trim() === '0' ||
+                     url.trim() === 'local' || url.trim() === 'webcam';
+    const isHttp   = /^https?:\/\//i.test(url);
+
+    if (isWebcam) {
+        // Local webcam — request user permission
+        // For 'out' camera, try to use a different device if available
+        try {
+            let constraints = { video: true };
+            if (side === 'out') {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const cams    = devices.filter(d => d.kind === 'videoinput');
+                if (cams.length >= 2) {
+                    // Use the second camera for 'out'
+                    constraints = { video: { deviceId: { exact: cams[1].deviceId } } };
+                }
+            }
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            if (side === 'in')  inStream  = stream;
+            else                outStream = stream;
+
+            video.srcObject = stream;
+            video.style.display = 'block';
+            placeholder.style.display = 'none';
+            statusEl.textContent = '● Live';
+            statusEl.className   = 'cam-status ok';
+        } catch (err) {
+            console.error(`${side} webcam error`, err);
+            statusEl.textContent = '✗ Camera denied';
+            placeholder.innerHTML = `<div class="icon">🚫</div><span>Camera permission denied</span>`;
+        }
+    } else if (isHttp) {
+        // HTTP MJPEG stream — use <img> tag which browsers handle natively
+        img.src           = url;
+        img.style.display = 'block';
+        placeholder.style.display = 'none';
+        statusEl.textContent = '● Streaming';
+        statusEl.className   = 'cam-status ok';
+        img.onerror = () => {
+            img.style.display   = 'none';
+            placeholder.style.display = 'flex';
+            placeholder.innerHTML = `<div class="icon">⚠️</div><span>Stream unavailable</span>`;
+            statusEl.textContent = '✗ No signal';
+            statusEl.className   = 'cam-status';
+        };
+    } else {
+        // Other URL format (HLS, RTSP proxy etc.) — try <video src>
+        video.src = url;
+        video.style.display = 'block';
+        placeholder.style.display = 'none';
+        statusEl.textContent = '● Connecting…';
+        statusEl.className   = 'cam-status';
+        video.onerror = () => {
+            video.style.display = 'none';
+            placeholder.style.display = 'flex';
+            placeholder.innerHTML = `<div class="icon">⚠️</div><span>Stream error</span>`;
+            statusEl.textContent = '✗ No signal';
+            statusEl.className   = 'cam-status';
+        };
+        video.oncanplay = () => {
+            statusEl.textContent = '● Live';
+            statusEl.className   = 'cam-status ok';
+        };
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+//  DETECTION LOOP
+//  Runs every 3 s. Captures a frame from each camera,
+//  sends to /api/sessions/process-frame, then records
+//  entry (in-cam) or exit (out-cam) per recognised face.
+//
+//  Cooldown prevents duplicate DB rows:
+//    Same PRN, same cam type → skip if < COOLDOWN_MS elapsed.
+// ─────────────────────────────────────────────────────────
+function startDetectionLoop(classId) {
+    if (detLoopHandle) clearInterval(detLoopHandle);
+    detLoopHandle = setInterval(() => {
+        captureAndProcess('in',  classId, 'entry');
+        captureAndProcess('out', classId, 'exit');
+    }, 3000);
+}
+
+async function captureAndProcess(side, classId, camType) {
+    const video = document.getElementById(`${side}-video`);
+    const img   = document.getElementById(`${side}-img`);
+
+    let base64 = null;
+
+    // Capture from video element (webcam / HLS)
+    if (video.style.display !== 'none' && video.videoWidth > 0) {
+        const offscreen = document.createElement('canvas');
+        offscreen.width  = video.videoWidth;
+        offscreen.height = video.videoHeight;
+        offscreen.getContext('2d').drawImage(video, 0, 0);
+        base64 = offscreen.toDataURL('image/jpeg', 0.8);
+    }
+    // Capture from img element (MJPEG stream)
+    else if (img.style.display !== 'none' && img.naturalWidth > 0) {
+        const offscreen = document.createElement('canvas');
+        offscreen.width  = img.naturalWidth;
+        offscreen.height = img.naturalHeight;
+        offscreen.getContext('2d').drawImage(img, 0, 0);
+        base64 = offscreen.toDataURL('image/jpeg', 0.8);
+    }
+
+    if (!base64 || !currentSessionId) return;
+
+    try {
+        const res  = await fetch('/api/sessions/process-frame', {
+            method : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body   : JSON.stringify({
+                session_id  : currentSessionId,
+                image_base64: base64
+            })
+        });
+        const data = await res.json();
+        if (!data.success) return;
+
+        // Render bounding boxes on the overlay canvas
+        renderOverlay(side, data.results, video, img);
+
+        // Process each recognised face
+        const now = new Date().toISOString();
+        for (const face of data.results) {
+            if (!face.prn) continue;  // unknown face — skip
+
+            const cooldownMs = camType === 'entry' ? ENTRY_COOLDOWN_MS : EXIT_COOLDOWN_MS;
+            const cacheKey   = `${face.prn}:${camType}`;
+            const lastCall   = lastCallMap[cacheKey] || 0;
+
+            if (Date.now() - lastCall < cooldownMs) continue;  // within cooldown — skip
+            lastCallMap[cacheKey] = Date.now();
+
+            // Call the appropriate attendance API
+            if (camType === 'entry') {
+                await recordEntry(classId, face.prn, now);
+                // Track presence
+                presentPrns.add(face.prn);
+                document.getElementById('stat-present').textContent = presentPrns.size;
+            } else {
+                await recordExit(classId, face.prn, now);
+            }
+
+            // Add to detection log
+            addDetectionRow(face.name, face.prn, camType, face.confidence);
+        }
+    } catch (err) {
+        console.error(`processFrame error (${side})`, err);
+    }
+}
+
+function renderOverlay(side, results, video, img) {
+    const canvas = document.getElementById(`${side}-canvas`);
+    let w = 0, h = 0;
+
+    if (video.style.display !== 'none' && video.videoWidth > 0) {
+        w = video.videoWidth; h = video.videoHeight;
+    } else if (img.style.display !== 'none' && img.naturalWidth > 0) {
+        w = img.naturalWidth; h = img.naturalHeight;
+    }
+
+    if (!w || !h) return;
+
+    // Scale canvas to match displayed size
+    const box = (video.style.display !== 'none' ? video : img).getBoundingClientRect();
+    canvas.width  = box.width;
+    canvas.height = box.height;
+    const scaleX = box.width  / w;
+    const scaleY = box.height / h;
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    results.forEach(face => {
+        if (face.status !== 'success') return;
+        const { top, right, bottom, left } = face.box;
+        const x = left   * scaleX;
+        const y = top    * scaleY;
+        const bw = (right  - left) * scaleX;
+        const bh = (bottom - top)  * scaleY;
+        const color = side === 'in' ? '#10b981' : '#f59e0b';
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth   = 2.5;
+        ctx.strokeRect(x, y, bw, bh);
+
+        // Name label
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y - 22, bw, 22);
+        ctx.fillStyle = '#000';
+        ctx.font      = `bold 12px Outfit, sans-serif`;
+        ctx.fillText(face.name, x + 5, y - 6);
+    });
+}
+
+// ─────────────────────────────────────────────────────────
+//  ENTRY / EXIT API CALLS
+// ─────────────────────────────────────────────────────────
+async function recordEntry(classId, prn, isoTime) {
+    try {
+        const res = await fetch(`/api/attendance/${classId}/entry`, {
+            method : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body   : JSON.stringify({
+                student_id  : prn,
+                entry_time  : isoTime,
+                session_date: isoTime.split('T')[0]
+            })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            console.warn('recordEntry failed:', err.detail);
+        }
+    } catch (err) {
+        console.error('recordEntry network error', err);
+    }
+}
+
+async function recordExit(classId, prn, isoTime) {
+    try {
+        const res = await fetch(`/api/attendance/${classId}/exit`, {
+            method : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body   : JSON.stringify({
+                student_id: prn,
+                exit_time : isoTime
+            })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            // 404 just means no open entry for this student — not an error in normal flow
+            if (res.status !== 404) console.warn('recordExit failed:', err.detail);
+        }
+    } catch (err) {
+        console.error('recordExit network error', err);
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+//  DETECTION LOG TABLE
+// ─────────────────────────────────────────────────────────
+function addDetectionRow(name, prn, camType, confidence) {
+    detEventCount++;
+    document.getElementById('det-count').textContent = `${detEventCount} events`;
+
+    const tbody = document.getElementById('det-body');
+    const tr    = document.createElement('tr');
+    const time  = new Date().toLocaleTimeString();
+    const conf  = confidence != null ? `${Math.round(confidence)}%` : '—';
+    const badgeClass = camType === 'entry' ? 'badge-entry' : 'badge-exit';
+    const label      = camType === 'entry' ? 'ENTRY' : 'EXIT';
+
+    tr.innerHTML = `
+        <td>${name}</td>
+        <td style="font-family:monospace;font-size:12px">${prn}</td>
+        <td><span class="badge ${badgeClass}">${label}</span></td>
+        <td style="color:var(--text-secondary)">${time}</td>
+        <td style="color:var(--text-secondary)">${conf}</td>
+    `;
+    tbody.insertBefore(tr, tbody.firstChild);
+    // Keep only the last 20 rows
+    while (tbody.rows.length > 20) tbody.deleteRow(tbody.rows.length - 1);
+}
+
+// ─────────────────────────────────────────────────────────
+//  SESSION TIMER
+// ─────────────────────────────────────────────────────────
+function startTimer() {
+    if (timerHandle) clearInterval(timerHandle);
+    timerHandle = setInterval(() => {
+        if (!sessionStartedAt) return;
+        const diff = Math.floor((Date.now() - sessionStartedAt.getTime()) / 1000);
+        const h = String(Math.floor(diff / 3600)).padStart(2, '0');
+        const m = String(Math.floor((diff % 3600) / 60)).padStart(2, '0');
+        const s = String(diff % 60).padStart(2, '0');
+        document.getElementById('session-timer').textContent = `${h}:${m}:${s}`;
+    }, 1000);
+}
+
+// ─────────────────────────────────────────────────────────
+//  END SESSION
+// ─────────────────────────────────────────────────────────
+async function endSession() {
+    if (!currentSessionId) return;
+
+    const btn = document.getElementById('btn-end');
+    btn.disabled = true;
+    btn.textContent = 'Ending…';
+
+    // Stop loops
+    if (detLoopHandle) { clearInterval(detLoopHandle); detLoopHandle = null; }
+    if (timerHandle)   { clearInterval(timerHandle);   timerHandle   = null; }
+
+    // Stop webcam streams
+    [inStream, outStream].forEach(stream => {
+        if (stream) stream.getTracks().forEach(t => t.stop());
+    });
+    inStream = null; outStream = null;
+
+    try {
+        const res  = await fetch(`/api/sessions/${currentSessionId}/end`, { method: 'POST' });
+        const data = await res.json();
+
+        if (!data.success) throw new Error(data.detail || 'Session end failed');
+
+        showResults(data.results || []);
+        toast('Session ended. Attendance saved.', 'success');
+    } catch (err) {
+        toast(`Error ending session: ${err.message}`, 'error');
+        btn.disabled = false;
+        btn.textContent = '⏹ End Session';
+        console.error(err);
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+//  RESULTS MODAL
+// ─────────────────────────────────────────────────────────
+function showResults(results) {
+    const tbody   = document.getElementById('res-body');
+    tbody.innerHTML = '';
+
+    let presentCount = 0, absentCount = 0;
+
+    results.forEach((r, i) => {
+        const isPresent = r.status === 'present';
+        if (isPresent) presentCount++; else absentCount++;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${i + 1}</td>
+            <td>${r.name}</td>
+            <td style="font-family:monospace;font-size:12px">${r.prn}</td>
+            <td>${r.presence_percentage}%</td>
+            <td><span class="${isPresent ? 'tag-present' : 'tag-absent'}">${r.status.toUpperCase()}</span></td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    document.getElementById('res-present').textContent = presentCount;
+    document.getElementById('res-absent').textContent  = absentCount;
+    document.getElementById('res-total').textContent   = results.length;
+
+    document.getElementById('results-modal').classList.add('open');
+    window._sessionResults = results;
+}
+
+// ─────────────────────────────────────────────────────────
+//  CSV EXPORT
+// ─────────────────────────────────────────────────────────
+function exportCSV() {
+    const results = window._sessionResults || [];
+    const rows = [['Roll No', 'Name', 'PRN', 'Presence %', 'Status']];
+    results.forEach(r => rows.push([r.roll_no, r.name, r.prn, r.presence_percentage, r.status]));
+    const csv  = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a    = document.createElement('a');
+    a.href     = URL.createObjectURL(blob);
+    a.download = `attendance_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+}
+
+// ─────────────────────────────────────────────────────────
+//  TOAST HELPER
+// ─────────────────────────────────────────────────────────
+function toast(msg, type = 'info') {
+    const container = document.getElementById('toast-container');
+    const div       = document.createElement('div');
+    div.className   = `toast ${type}`;
+    div.textContent = msg;
+    container.appendChild(div);
+    setTimeout(() => div.remove(), 4000);
+}
+</script>
+</body>
+</html>
