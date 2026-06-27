@@ -765,4 +765,4 @@ async def chat_query(payload: ChatPayload):
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 if __name__ == "__main__":
-    uvicorn.run("run_api:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("run_api:app", host="0.0.0.0", port=8000, reload=True)

@@ -149,3 +149,30 @@ After the prototype is stable, the next phase should be:
 2. Add a FastAPI service layer around enrollment and attendance logging.
 3. Move the UI from Tkinter to a web dashboard.
 4. Introduce role-based authentication and reporting.
+
+## Deployment (VPS & Docker)
+
+For running the API and Database on a VPS or production environment, a Docker Compose setup and a VPS bootstrap script are provided.
+
+### 1. Initial VPS Setup
+
+If you are running this on a fresh Ubuntu/Debian VPS, you can use the provided setup script to automatically install dependencies, set up a swap file (if RAM <= 2GB), and install Docker & Docker Compose:
+
+```bash
+chmod +x setup_vps.sh
+./setup_vps.sh
+```
+
+### 2. Configure Environment
+
+Before starting the containers, make sure to update the credentials in the `docker-compose.yml` file, specifically the `POSTGRES_PASSWORD` and any other environment variables you may need (like `GEMINI_API_KEY` or SMTP settings).
+
+### 3. Run with Docker Compose
+
+To build and run the PostgreSQL and FastAPI services in the background, use:
+
+```bash
+docker compose up --build -d
+```
+
+The API will be exposed on port `8000` (e.g., `http://your-vps-ip:8000`). Make sure to open port 8000 in your server's firewall (or configure a reverse proxy like Nginx to route traffic from port 80/443 to 8000).
