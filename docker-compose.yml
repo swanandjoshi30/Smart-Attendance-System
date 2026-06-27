@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  db:
+    image: ankane/pgvector:v0.5.1
+    container_name: attendance_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: attendance2
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secure_db_password_here
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  api:
+    build: .
+    container_name: attendance_api
+    restart: always
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+    environment:
+      - ATTENDANCE_DB_HOST=db
+      - ATTENDANCE_DB_NAME=attendance2
+      - ATTENDANCE_DB_USER=postgres
+      - ATTENDANCE_DB_PASSWORD=secure_db_password_here
+      - ATTENDANCE_DB_PORT=5432
+      # Configure AI / SMTP variables here if needed:
+      # - GEMINI_API_KEY=your_gemini_key
+      # - SMTP_HOST=smtp.gmail.com
+      # - SMTP_PORT=587
+    volumes:
+      - .:/app
+
+volumes:
+  pgdata:
