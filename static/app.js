@@ -1,5 +1,5 @@
 // ------------------ GLOBAL CONFIGURATION & STATE ------------------
-const API_URL = window.location.origin;
+const API_URL = "http://157.245.98.15:8000";
 
 let currentUser = null;
 let currentToken = null;
