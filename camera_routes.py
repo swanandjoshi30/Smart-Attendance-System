@@ -28,18 +28,115 @@ router = APIRouter()
 
 def grab_frame_from_url(url: str, timeout_sec: float = 5.0):
     """
-    Grab a single frame from an MJPEG / HTTP camera stream.
-    Uses a daemon thread so we can enforce a hard timeout —
-    cv2.VideoCapture can block indefinitely on unreachable hosts.
-
-    Returns (frame_ndarray, error_string).  One of the two will be None.
+    Grab a single frame from an MJPEG / HTTP camera stream or RTSP/webcam source.
+    If HTTP/HTTPS, attempts to fetch as a single snapshot via standard HTTP GET,
+    bypassing cv2.VideoCapture limitations/hangs.
     """
+    import urllib.request
+    import urllib.parse
+    import base64
+
+    # 1. Try direct HTTP fetch for HTTP/HTTPS URLs
+    url_str = str(url).strip()
+    if url_str.startswith("http://") or url_str.startswith("https://"):
+        try:
+            parsed = urllib.parse.urlparse(url_str)
+            snapshot_url = url_str
+
+            # Map stream endpoints to snapshot endpoints to avoid downloading infinite MJPEG streams
+            if "/video" in parsed.path:
+                snapshot_url = url_str.replace("/video", "/shot.jpg")
+            elif "/stream" in parsed.path:
+                snapshot_url = url_str.replace("/stream", "/snapshot.jpg")
+            elif parsed.path == "" or parsed.path == "/":
+                # Appending snapshot endpoint for root URLs (e.g. IP Webcam default)
+                new_path = "/shot.jpg"
+                snapshot_url = urllib.parse.urlunparse((
+                    parsed.scheme,
+                    parsed.netloc,
+                    new_path,
+                    parsed.params,
+                    parsed.query,
+                    parsed.fragment
+                ))
+
+            # Handle Basic Authentication in URL (e.g., http://user:pass@ip:port/path)
+            parsed_snap = urllib.parse.urlparse(snapshot_url)
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            request_url = snapshot_url
+
+            if parsed_snap.username or parsed_snap.password:
+                username = parsed_snap.username or ""
+                password = parsed_snap.password or ""
+                # Strip credentials from request URL to conform to standard urllib expectations
+                netloc = parsed_snap.hostname
+                if parsed_snap.port:
+                    netloc += f":{parsed_snap.port}"
+                request_url = urllib.parse.urlunparse((
+                    parsed_snap.scheme,
+                    netloc,
+                    parsed_snap.path,
+                    parsed_snap.params,
+                    parsed_snap.query,
+                    parsed_snap.fragment
+                ))
+                auth_str = f"{username}:{password}"
+                auth_b64 = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
+                headers['Authorization'] = f"Basic {auth_b64}"
+
+            print(f"[DEBUG IP CAM] Fetching snapshot from URL: {request_url}")
+            req = urllib.request.Request(request_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout_sec) as response:
+                img_bytes = response.read()
+                nparr = np.frombuffer(img_bytes, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if frame is not None:
+                    print(f"[DEBUG IP CAM] Successfully fetched and decoded snapshot via HTTP")
+                    return frame, None
+        except Exception as e:
+            print(f"[DEBUG IP CAM] HTTP snapshot fetch failed: {e}")
+            # If snapshot mapping failed or threw an error, try original URL direct fetch if different
+            if 'request_url' in locals() and request_url != url_str:
+                try:
+                    # Clean credentials from original URL if present
+                    parsed_orig = urllib.parse.urlparse(url_str)
+                    headers_orig = {'User-Agent': 'Mozilla/5.0'}
+                    req_url_orig = url_str
+                    if parsed_orig.username or parsed_orig.password:
+                        netloc = parsed_orig.hostname
+                        if parsed_orig.port:
+                            netloc += f":{parsed_orig.port}"
+                        req_url_orig = urllib.parse.urlunparse((
+                            parsed_orig.scheme,
+                            netloc,
+                            parsed_orig.path,
+                            parsed_orig.params,
+                            parsed_orig.query,
+                            parsed_orig.fragment
+                        ))
+                        auth_str = f"{parsed_orig.username or ''}:{parsed_orig.password or ''}"
+                        auth_b64 = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
+                        headers_orig['Authorization'] = f"Basic {auth_b64}"
+
+                    req = urllib.request.Request(req_url_orig, headers=headers_orig)
+                    with urllib.request.urlopen(req, timeout=timeout_sec) as response:
+                        img_bytes = response.read()
+                        nparr = np.frombuffer(img_bytes, np.uint8)
+                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                        if frame is not None:
+                            return frame, None
+                except Exception as e2:
+                    print(f"[DEBUG IP CAM] Original URL HTTP fetch also failed: {e2}")
+
+    # 2. Fallback to OpenCV VideoCapture (RTSP, local webcams, or HTTP streams that don't support snapshot)
     frame_holder = [None]
     error_holder = [None]
 
     def _read():
         try:
-            cap = cv2.VideoCapture(url)
+            # Check if index is a local webcam digit
+            src = int(url_str) if url_str.isdigit() else url_str
+            cap = cv2.VideoCapture(src)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # don't buffer old frames
             if cap.isOpened():
                 # Discard a few buffered frames to get the most current one
@@ -51,20 +148,22 @@ def grab_frame_from_url(url: str, timeout_sec: float = 5.0):
                 else:
                     error_holder[0] = "cap.read() returned no frame"
             else:
-                error_holder[0] = "Could not open video stream"
+                error_holder[0] = f"Could not open video source: {url_str}"
             cap.release()
         except Exception as e:
             error_holder[0] = str(e)
 
+    print(f"[DEBUG IP CAM] Falling back to OpenCV VideoCapture for source: {url_str}")
     t = threading.Thread(target=_read, daemon=True)
     t.start()
     t.join(timeout=timeout_sec)
 
     if t.is_alive():
-        # Thread still blocked — camera unreachable
-        return None, f"Timeout ({timeout_sec}s) connecting to camera"
+        return None, f"Timeout ({timeout_sec}s) connecting to video source"
 
     return frame_holder[0], error_holder[0]
+
+
 
 
 # ─────────────────────────────────────────────────────────
@@ -78,17 +177,31 @@ class CameraConfig(BaseModel):
 
 @router.post("/classes/{class_id}/cameras")
 async def set_camera_urls(class_id: int, config: CameraConfig):
-    """Save in/out camera URLs for a classroom."""
+    """Save in/out camera URLs for a classroom with auto-normalization."""
     try:
         from run_api import db
-        db.set_camera_urls(
-            class_id,
-            (config.in_camera_url  or "").strip(),
-            (config.out_camera_url or "").strip()
-        )
-        return {"success": True, "detail": "Camera URLs updated"}
+        in_url = (config.in_camera_url or "").strip()
+        out_url = (config.out_camera_url or "").strip()
+
+        def normalize(u: str) -> str:
+            if not u:
+                return ""
+            if u.isdigit() or u.lower() in ("local", "webcam"):
+                return u
+            if not (u.startswith("http://") or u.startswith("https://") or u.startswith("rtsp://")):
+                if "." in u or ":" in u:
+                    return "http://" + u
+            return u
+
+        normalized_in = normalize(in_url)
+        normalized_out = normalize(out_url)
+        print(f"[DEBUG CAMERA CONFIG] Saving normalized URLs - In: {normalized_in}, Out: {normalized_out}")
+
+        db.set_camera_urls(class_id, normalized_in, normalized_out)
+        return {"success": True, "detail": "Camera URLs updated successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.get("/classes/{class_id}/cameras")
@@ -138,15 +251,20 @@ async def process_ip_camera_frame(payload: IPCameraFramePayload):
     """
     try:
         from run_api import face_engine, db
+        print(f"[DEBUG IP CAM] Processing frame for session {payload.session_id}, class {payload.class_id}, URL: {payload.camera_url}")
 
         # ── 1. Grab frame from camera ──
         frame, error = grab_frame_from_url(payload.camera_url, timeout_sec=5.0)
         if frame is None:
+            print(f"[DEBUG IP CAM] Frame grab failed: {error}")
             return {
                 "success": False,
                 "detail":  error or "Could not grab frame from camera",
                 "results": []
             }
+
+        h, w = frame.shape[:2]
+        print(f"[DEBUG IP CAM] Grabbed frame of size {w}x{h}")
 
         # ── 2. Enhance + detect faces ──
         frame_enhanced = face_engine.enhance_image_quality(frame)
@@ -154,6 +272,8 @@ async def process_ip_camera_frame(payload: IPCameraFramePayload):
 
         results        = []
         recognized_prns = []
+
+        print(f"[DEBUG IP CAM] Detected {len(face_encodings)} faces in frame")
 
         if face_encodings:
             recognitions = face_engine.recognize_faces(face_encodings)
@@ -164,6 +284,7 @@ async def process_ip_camera_frame(payload: IPCameraFramePayload):
                 if prn:
                     # Only accept students enrolled in this session's class
                     student_class_id = db.get_student_class_id(prn)
+                    print(f"[DEBUG IP CAM] Recognized PRN: {prn} (confidence: {confidence}%), student class: {student_class_id}, session class: {payload.class_id}")
                     if student_class_id != payload.class_id:
                         results.append({
                             "box":        {"top": loc[0], "right": loc[1],
@@ -186,6 +307,7 @@ async def process_ip_camera_frame(payload: IPCameraFramePayload):
                     })
                     recognized_prns.append(prn)
                 else:
+                    print(f"[DEBUG IP CAM] Face detected but unrecognized")
                     results.append({
                         "box":        {"top": loc[0], "right": loc[1],
                                        "bottom": loc[2], "left": loc[3]},
@@ -198,11 +320,15 @@ async def process_ip_camera_frame(payload: IPCameraFramePayload):
         # ── 3. Log session detections ──
         if recognized_prns:
             db.log_session_detections(payload.session_id, recognized_prns)
+            print(f"[DEBUG IP CAM] Logged {len(recognized_prns)} recognized PRNs to DB")
 
         return {"success": True, "results": results}
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # ─────────────────────────────────────────────────────────
