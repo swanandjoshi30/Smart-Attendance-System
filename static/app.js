@@ -1,5 +1,5 @@
 // ------------------ GLOBAL CONFIGURATION & STATE ------------------
-const API_URL = "http://157.245.98.15:8000";
+const API_URL = ""; // Relative paths — all requests go through Nginx
 
 let currentUser = null;
 let currentToken = null;
