@@ -1,25 +1,25 @@
 /* Global styling Reset & variables */
 :root {
-    --bg-primary: #0b1329;
-    --bg-secondary: #1c2541;
-    --accent-blue: #3a86c8;
-    --accent-blue-hover: #4895ef;
+    --bg-primary: #0f172a;
+    --bg-secondary: #1e293b;
+    --accent-blue: #2563eb;
+    --accent-blue-hover: #1d4ed8;
     --text-primary: #f8fafc;
     --text-secondary: #94a3b8;
-    --border-color: rgba(255, 255, 255, 0.08);
-    --glass-bg: rgba(28, 37, 65, 0.65);
-    --glass-border: rgba(255, 255, 255, 0.06);
-    --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-    --success: #10b981;
-    --danger: #ef4444;
-    --warning: #f59e0b;
+    --border-color: #334155;
+    --glass-bg: rgba(30, 41, 59, 0.95);
+    --glass-border: #334155;
+    --glass-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --success: #16a34a;
+    --danger: #dc2626;
+    --warning: #ca8a04;
 }
 
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Inter', sans-serif;
 }
 
 body {
@@ -79,20 +79,20 @@ button:active {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #3a86c8, #4cc9f0);
+    background: var(--accent-blue);
     color: white;
     padding: 12px 24px;
     font-size: 1rem;
-    box-shadow: 0 4px 15px rgba(76, 201, 240, 0.3);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 
 .btn-primary:hover {
-    box-shadow: 0 6px 20px rgba(76, 201, 240, 0.5);
-    background: linear-gradient(135deg, #4895ef, #4cc9f0);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    background: var(--accent-blue-hover);
 }
 
 .btn-success {
-    background: linear-gradient(135deg, #059669, #10b981);
+    background: var(--success);
     color: white;
     padding: 12px 24px;
     font-size: 0.95rem;
@@ -100,11 +100,12 @@ button:active {
 }
 
 .btn-success:hover {
+    background: #15803d;
     box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
 }
 
 .btn-danger {
-    background: linear-gradient(135deg, #dc2626, #ef4444);
+    background: var(--danger);
     color: white;
     padding: 12px 24px;
     font-size: 0.95rem;
@@ -112,6 +113,7 @@ button:active {
 }
 
 .btn-danger:hover {
+    background: #b91c1c;
     box-shadow: 0 6px 20px rgba(239, 68, 68, 0.5);
 }
 
@@ -135,7 +137,7 @@ button:active {
     height: 100vh;
     width: 100vw;
     z-index: 1000;
-    background: radial-gradient(circle at center, #1c2541 0%, #0b1329 100%);
+    background: var(--bg-primary);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -165,7 +167,7 @@ button:active {
 
 .logo i {
     font-size: 2.2rem;
-    color: #4cc9f0;
+    color: var(--accent-blue);
     filter: drop-shadow(0 0 8px rgba(76, 201, 240, 0.5));
 }
 
@@ -178,7 +180,7 @@ button:active {
 .logo h2 span {
     font-size: 0.95rem;
     background: rgba(76, 201, 240, 0.15);
-    color: #4cc9f0;
+    color: var(--accent-blue);
     padding: 2px 8px;
     border-radius: 6px;
     font-weight: 600;
@@ -227,7 +229,7 @@ button:active {
 }
 
 .input-group input:focus, .glass-input:focus {
-    border-color: #4cc9f0;
+    border-color: var(--accent-blue);
     background: rgba(255, 255, 255, 0.08);
     box-shadow: 0 0 10px rgba(76, 201, 240, 0.15);
     outline: none;
@@ -284,7 +286,7 @@ button:active {
 
 .sidebar-logo i {
     font-size: 1.8rem;
-    color: #4cc9f0;
+    color: var(--accent-blue);
 }
 
 .sidebar-logo h2 {
@@ -322,8 +324,8 @@ button:active {
 
 .nav-item.active {
     background: linear-gradient(135deg, rgba(58, 134, 200, 0.25), rgba(76, 201, 240, 0.15));
-    color: #4cc9f0;
-    border-left: 3px solid #4cc9f0;
+    color: var(--accent-blue);
+    border-left: 3px solid var(--accent-blue);
     border-radius: 0 12px 12px 0;
 }
 
@@ -343,7 +345,7 @@ button:active {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #4cc9f0;
+    color: var(--accent-blue);
     font-size: 1.1rem;
 }
 
@@ -410,7 +412,7 @@ button:active {
     border-radius: 20px;
     font-size: 0.9rem;
     font-weight: 600;
-    color: #4cc9f0;
+    color: var(--accent-blue);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -615,7 +617,7 @@ button:active {
     font-size: 1.25rem;
 }
 
-.card-icon.blue { background: rgba(58, 134, 200, 0.15); color: #3a86c8; }
+.card-icon.blue { background: rgba(58, 134, 200, 0.15); color: var(--accent-blue); }
 .card-icon.green { background: rgba(16, 185, 129, 0.15); color: var(--success); }
 .card-icon.orange { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
 
@@ -651,7 +653,7 @@ button:active {
 
 .badge {
     background: rgba(76, 201, 240, 0.15);
-    color: #4cc9f0;
+    color: var(--accent-blue);
     font-size: 0.8rem;
     padding: 4px 10px;
     border-radius: 12px;
@@ -1033,7 +1035,7 @@ button:active {
 
 .btn-edit-tbl {
     background: rgba(58, 134, 200, 0.15);
-    color: #4cc9f0;
+    color: var(--accent-blue);
     border: 1px solid rgba(58, 134, 200, 0.3);
     padding: 5px 10px;
     font-size: 0.75rem;
@@ -1160,12 +1162,12 @@ button:active {
 
 .tree-subject-item:hover {
     background: rgba(76, 201, 240, 0.1);
-    color: #4cc9f0;
+    color: var(--accent-blue);
 }
 
 .tree-subject-item.active {
     background: linear-gradient(135deg, rgba(58, 134, 200, 0.2), rgba(76, 201, 240, 0.15));
-    color: #4cc9f0;
+    color: var(--accent-blue);
     font-weight: 600;
 }
 
@@ -1228,7 +1230,7 @@ button:active {
 
 .suggestion-btn:hover {
     background: rgba(76, 201, 240, 0.15);
-    color: #4cc9f0;
+    color: var(--accent-blue);
     border-color: rgba(76, 201, 240, 0.3);
 }
 
@@ -1281,7 +1283,7 @@ button:active {
 }
 
 .message.user .message-bubble {
-    background: linear-gradient(135deg, #1e3a8a, #2563eb);
+    background: var(--accent-blue);
     color: #ffffff;
     border-bottom-right-radius: 2px;
     box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
