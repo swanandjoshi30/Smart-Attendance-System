@@ -9,11 +9,15 @@ from contextlib import contextmanager
 from pathlib import Path
 import json
 import numpy as np
+import threading
 
 class DatabaseManager:
     def __init__(self, config):
         self.config = config
         self.schema_path = Path(__file__).with_name('tables')
+        self._cache_lock = threading.Lock()
+        self._student_name_cache = {}
+        self._student_class_cache = {}
         try:
             self.connection_pool = psycopg2.pool.SimpleConnectionPool(
                 1, 10,  # min and max connections
@@ -99,6 +103,7 @@ class DatabaseManager:
                         (prn, encoding_json)
                     )
                     conn.commit()
+                    self._clear_student_cache(prn)
                     return True, "Student registered successfully"
                 except psycopg2.IntegrityError as e:
                     conn.rollback()
@@ -134,6 +139,7 @@ class DatabaseManager:
                         """, (prn, encoding_json))
                     
                     conn.commit()
+                    self._clear_student_cache(prn)
                     return True, "Student details updated successfully"
                 except psycopg2.IntegrityError as e:
                     conn.rollback()
@@ -154,6 +160,7 @@ class DatabaseManager:
                 try:
                     cur.execute("DELETE FROM Students WHERE prn_no = %s", (prn,))
                     conn.commit()
+                    self._clear_student_cache(prn)
                     return True, "Student deleted successfully"
                 except Exception as e:
                     conn.rollback()
@@ -189,21 +196,41 @@ class DatabaseManager:
                     print(f"Error logging attendance: {e}")
                     return False
 
+    def _clear_student_cache(self, prn):
+        """Invalidate cache entries for a student"""
+        with self._cache_lock:
+            self._student_name_cache.pop(prn, None)
+            self._student_class_cache.pop(prn, None)
+
     def get_student_name(self, prn_no):
         """Get student name by PRN"""
+        with self._cache_lock:
+            if prn_no in self._student_name_cache:
+                return self._student_name_cache[prn_no]
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT name FROM Students WHERE prn_no = %s", (prn_no,))
                 result = cur.fetchone()
-                return result[0] if result else None
+                name = result[0] if result else None
+                if name is not None:
+                    with self._cache_lock:
+                        self._student_name_cache[prn_no] = name
+                return name
 
     def get_student_class_id(self, prn_no):
         """Get student class ID by PRN"""
+        with self._cache_lock:
+            if prn_no in self._student_class_cache:
+                return self._student_class_cache[prn_no]
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT class_id FROM Students WHERE prn_no = %s", (prn_no,))
                 result = cur.fetchone()
-                return result[0] if result else None
+                class_id = result[0] if result else None
+                if class_id is not None:
+                    with self._cache_lock:
+                        self._student_class_cache[prn_no] = class_id
+                return class_id
 
     def get_session_class_id(self, session_id):
         """Get session class ID by session ID"""
@@ -403,6 +430,7 @@ class DatabaseManager:
                         (prn, class_id, int(roll_no), name, email)
                     )
                     conn.commit()
+                    self._clear_student_cache(prn)
                     return True, "Student registered successfully"
                 except psycopg2.IntegrityError as e:
                     conn.rollback()

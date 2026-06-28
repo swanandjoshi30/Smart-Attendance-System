@@ -6,12 +6,39 @@ from ultralytics import YOLO
 from insightface import app
 import time
 from collections import defaultdict
+import os
+import onnxruntime as ort
+
+# Monkeypatch ONNX Runtime InferenceSession to apply CPU optimizations before InsightFace loads models
+_original_inference_session_init = ort.InferenceSession.__init__
+
+def _optimized_inference_session_init(self, path_or_bytes, sess_options=None, *args, **kwargs):
+    if sess_options is None:
+        sess_options = ort.SessionOptions()
+    
+    # Enable all graph optimizations
+    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    
+    # Configure CPU thread count
+    cpu_cores = os.cpu_count() or 4
+    # Default to physical cores (half of logical cores) or a max of 4 to prevent CPU exhaustion on host
+    default_threads = max(1, min(4, cpu_cores // 2))
+    intra_threads = int(os.getenv('ORT_INTRA_THREADS', str(default_threads)))
+    
+    sess_options.intra_op_num_threads = intra_threads
+    sess_options.inter_op_num_threads = 1
+    sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    
+    _original_inference_session_init(self, path_or_bytes, sess_options, *args, **kwargs)
+
+ort.InferenceSession.__init__ = _optimized_inference_session_init
 
 class FaceRecognitionEngine:
     def __init__(self, config):
         self.config = config
         self.known_embeddings = []
         self.known_prns = []
+        self.known_stack = None
         self.lock = Lock()
         self.face_analyzer = None
         self.yolo_detector = None
@@ -55,6 +82,12 @@ class FaceRecognitionEngine:
                 normalized_embeddings.append(self._normalize_embedding(embedding))
             self.known_embeddings = normalized_embeddings
             self.known_prns = list(prns)
+            
+            # Pre-compile the embeddings stack to avoid doing np.vstack on every request
+            if normalized_embeddings:
+                self.known_stack = np.vstack(normalized_embeddings)
+            else:
+                self.known_stack = None
         print(f"✓ Loaded {len(self.known_prns)} known face embeddings")
 
     def _normalize_embedding(self, embedding):
@@ -157,10 +190,10 @@ class FaceRecognitionEngine:
     def recognize_faces(self, face_encodings):
         results = []
         with self.lock:
-            if len(self.known_embeddings) == 0:
+            if getattr(self, 'known_stack', None) is None or len(self.known_stack) == 0:
                 return [(None, 0.0) for _ in face_encodings]
 
-            known_stack = np.vstack(self.known_embeddings)
+            known_stack = self.known_stack
             threshold = float(self.config.get('recognition_tolerance', 0.8))
 
             for face_encoding in face_encodings:

@@ -681,12 +681,53 @@ async function setupCameraFeed(side, url) {
 //  Cooldown prevents duplicate DB rows:
 //    Same PRN, same cam type → skip if < COOLDOWN_MS elapsed.
 // ─────────────────────────────────────────────────────────
+let isProcessingIn = false;
+let isProcessingOut = false;
+
 function startDetectionLoop(classId) {
-    if (detLoopHandle) clearInterval(detLoopHandle);
-    detLoopHandle = setInterval(() => {
-        captureAndProcess('in',  classId, 'entry');
-        captureAndProcess('out', classId, 'exit');
-    }, 3000);
+    if (detLoopHandle) clearTimeout(detLoopHandle);
+    isProcessingIn = false;
+    isProcessingOut = false;
+    
+    async function loop() {
+        if (!currentSessionId) return;
+        
+        // Process entry camera
+        if (!isProcessingIn) {
+            isProcessingIn = true;
+            try {
+                await captureAndProcess('in', classId, 'entry');
+            } catch (err) {
+                console.error("Error in entry loop:", err);
+            } finally {
+                isProcessingIn = false;
+            }
+        }
+        
+        // Wait 1.5 seconds before processing exit camera to distribute server load
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        if (!currentSessionId) return;
+        
+        // Process exit camera
+        if (!isProcessingOut) {
+            isProcessingOut = true;
+            try {
+                await captureAndProcess('out', classId, 'exit');
+            } catch (err) {
+                console.error("Error in exit loop:", err);
+            } finally {
+                isProcessingOut = false;
+            }
+        }
+        
+        // Schedule next check in 1.5 seconds (so each camera is polled every ~3 seconds, but offset from each other)
+        if (currentSessionId) {
+            detLoopHandle = setTimeout(loop, 1500);
+        }
+    }
+    
+    detLoopHandle = setTimeout(loop, 1000);
 }
 
 async function captureAndProcess(side, classId, camType) {
@@ -1024,7 +1065,7 @@ async function endSession() {
     btn.textContent = 'Ending…';
 
     // Stop loops
-    if (detLoopHandle) { clearInterval(detLoopHandle); detLoopHandle = null; }
+    if (detLoopHandle) { clearTimeout(detLoopHandle); detLoopHandle = null; }
     if (timerHandle)   { clearInterval(timerHandle);   timerHandle   = null; }
 
     // Stop webcam streams

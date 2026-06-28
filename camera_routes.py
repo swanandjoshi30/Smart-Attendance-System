@@ -18,6 +18,7 @@ from typing import Optional, List
 import threading
 import cv2
 import numpy as np
+import time
 
 router = APIRouter()
 
@@ -164,6 +165,152 @@ def grab_frame_from_url(url: str, timeout_sec: float = 5.0):
     return frame_holder[0], error_holder[0]
 
 
+class CameraWorker:
+    def __init__(self, url):
+        self.url = url
+        self.frame = None
+        self.error = None
+        self.last_accessed = time.time()
+        self.is_running = True
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        import urllib.request
+        import urllib.parse
+        import base64
+        
+        url_str = self.url.strip()
+        is_http = url_str.startswith("http://") or url_str.startswith("https://")
+        
+        cap = None
+        
+        while self.is_running:
+            # If the camera hasn't been accessed for a long time (e.g. 5 minutes), close the stream to save bandwidth
+            if time.time() - self.last_accessed > 300:
+                print(f"[CAMERA REGISTRY] Inactivity timeout. Stopping camera worker for: {self.url}")
+                break
+                
+            try:
+                if is_http:
+                    # For HTTP, we fetch snapshots repeatedly
+                    snapshot_url = url_str
+                    parsed = urllib.parse.urlparse(url_str)
+                    if "/video" in parsed.path:
+                        snapshot_url = url_str.replace("/video", "/shot.jpg")
+                    elif "/stream" in parsed.path:
+                        snapshot_url = url_str.replace("/stream", "/snapshot.jpg")
+                    elif parsed.path == "" or parsed.path == "/":
+                        snapshot_url = urllib.parse.urlunparse((
+                            parsed.scheme, parsed.netloc, "/shot.jpg", parsed.params, parsed.query, parsed.fragment
+                        ))
+                    
+                    parsed_snap = urllib.parse.urlparse(snapshot_url)
+                    headers = {'User-Agent': 'Mozilla/5.0'}
+                    request_url = snapshot_url
+                    if parsed_snap.username or parsed_snap.password:
+                        username = parsed_snap.username or ""
+                        password = parsed_snap.password or ""
+                        netloc = parsed_snap.hostname
+                        if parsed_snap.port:
+                            netloc += f":{parsed_snap.port}"
+                        request_url = urllib.parse.urlunparse((
+                            parsed_snap.scheme, netloc, parsed_snap.path, parsed_snap.params, parsed_snap.query, parsed_snap.fragment
+                        ))
+                        auth_str = f"{username}:{password}"
+                        auth_b64 = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
+                        headers['Authorization'] = f"Basic {auth_b64}"
+                        
+                    req = urllib.request.Request(request_url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=3.0) as response:
+                        img_bytes = response.read()
+                        nparr = np.frombuffer(img_bytes, np.uint8)
+                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                        if frame is not None:
+                            with self.lock:
+                                self.frame = frame
+                                self.error = None
+                        else:
+                            with self.lock:
+                                self.error = "Failed to decode frame from HTTP stream"
+                    time.sleep(0.05) # Cap at ~20 fps to save CPU
+                else:
+                    # RTSP / webcam / other source: open cv2.VideoCapture persistent stream
+                    if cap is None or not cap.isOpened():
+                        src = int(url_str) if url_str.isdigit() else url_str
+                        cap = cv2.VideoCapture(src)
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        
+                    if cap.isOpened():
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            with self.lock:
+                                self.frame = frame
+                                self.error = None
+                        else:
+                            with self.lock:
+                                self.error = "RTSP read returned no frame"
+                            cap.release()
+                            cap = None
+                            time.sleep(1.0)
+                        time.sleep(0.005) # Prevent CPU throttling
+                    else:
+                        with self.lock:
+                            self.error = f"Failed to open source {url_str}"
+                        time.sleep(2.0)
+            except Exception as e:
+                with self.lock:
+                    self.error = str(e)
+                if cap is not None:
+                    cap.release()
+                    cap = None
+                time.sleep(1.0)
+                
+        if cap is not None:
+            cap.release()
+
+    def get_frame(self):
+        self.last_accessed = time.time()
+        with self.lock:
+            return self.frame, self.error
+
+    def stop(self):
+        self.is_running = False
+
+
+class CameraRegistry:
+    def __init__(self):
+        self.workers = {}
+        self.lock = threading.Lock()
+
+    def get_frame(self, url):
+        url = url.strip()
+        with self.lock:
+            # Clean up stopped workers first
+            stopped = [u for u, w in self.workers.items() if not w.thread.is_alive()]
+            for u in stopped:
+                del self.workers[u]
+                
+            if url not in self.workers:
+                print(f"[CAMERA REGISTRY] Starting persistent camera worker for: {url}")
+                self.workers[url] = CameraWorker(url)
+            worker = self.workers[url]
+            
+        # Wait a short moment if worker has just started and frame is not yet available
+        start_wait = time.time()
+        while time.time() - start_wait < 2.0:
+            frame, error = worker.get_frame()
+            if frame is not None or error is not None:
+                return frame, error
+            time.sleep(0.05)
+            
+        return worker.get_frame()
+
+
+GLOBAL_CAMERA_REGISTRY = CameraRegistry()
+
+
 
 
 # ─────────────────────────────────────────────────────────
@@ -253,8 +400,8 @@ async def process_ip_camera_frame(payload: IPCameraFramePayload):
         from run_api import face_engine, db
         print(f"[DEBUG IP CAM] Processing frame for session {payload.session_id}, class {payload.class_id}, URL: {payload.camera_url}")
 
-        # ── 1. Grab frame from camera ──
-        frame, error = grab_frame_from_url(payload.camera_url, timeout_sec=5.0)
+        # ── 1. Grab frame from camera via registry ──
+        frame, error = GLOBAL_CAMERA_REGISTRY.get_frame(payload.camera_url)
         if frame is None:
             print(f"[DEBUG IP CAM] Frame grab failed: {error}")
             return {
