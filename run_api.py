@@ -571,11 +571,13 @@ Important rules:
 4. Use CURRENT_DATE or appropriate date/time arithmetic if the user asks for 'today' or 'yesterday'.
 5. Always join tables properly. For example, to find attendance of a student by name, join Students and AttendanceLog.
 6. If the user request is just general greeting/conversation (like 'hello', 'who are you') or cannot be translated to a database query, return an empty string.
+7. ALWAYS use DISTINCT when querying students based on attendance logs to avoid repeating names. For example, SELECT DISTINCT s.name, s.prn_no...
+8. Always select comprehensive details like roll_no, name, prn_no, and email when showing students.
 
 User Request: {user_query}
 SQL Query:"""
 
-RESPONSE_FORMAT_PROMPT = """You are the EduVision Smart Attendance AI Assistant.
+RESPONSE_FORMAT_PROMPT = """You are the EduVision Smart Attendance AI Assistant, a highly professional, polite, and helpful assistant.
 The user asked: "{user_query}"
 
 To answer this, we executed the following SQL query:
@@ -584,10 +586,11 @@ To answer this, we executed the following SQL query:
 The query returned these results:
 {query_results_json}
 
-Please write a helpful, friendly, and concise response in natural language answering the user's question based on these results.
-- If there are lists of students or tables of data, you can output standard Markdown tables.
-- Keep the response accurate and matching the database results.
+Please write a highly professional, structured, and clear response in natural language answering the user's question based on these results.
+- Always use standard Markdown tables if there are lists of students or tables of data to neatly show proper details.
+- Keep the response accurate and matching the database results precisely.
 - Do not mention the internal SQL query or technical database terms unless the user explicitly asked for them.
+- Be extremely polite and professional (e.g., "Here are the details you requested...", "I found the following information...").
 """
 
 def make_llm_request(prompt: str) -> str:
@@ -734,29 +737,46 @@ async def chat_query(payload: ChatPayload):
         
         msg_lower = user_msg.lower()
         fallback_sql = ""
+        context_msg = ""
+        
+        if "absent" in msg_lower:
+            fallback_sql = "SELECT DISTINCT s.roll_no, s.name, s.prn_no, s.email FROM Students s JOIN AttendanceLog al ON s.prn_no = al.prn_no WHERE DATE(al.timestamp) = CURRENT_DATE AND al.status = 'absent' ORDER BY s.roll_no;"
+            context_msg = "students marked absent today"
+        elif "present" in msg_lower:
+            fallback_sql = "SELECT DISTINCT s.roll_no, s.name, s.prn_no, s.email FROM Students s JOIN AttendanceLog al ON s.prn_no = al.prn_no WHERE DATE(al.timestamp) = CURRENT_DATE AND al.status = 'present' ORDER BY s.roll_no;"
+            context_msg = "students marked present today"
+        elif "all students" in msg_lower or "list students" in msg_lower or "registered" in msg_lower:
+            fallback_sql = "SELECT roll_no, name, prn_no, email FROM Students ORDER BY roll_no;"
+            context_msg = "all registered students"
+        elif "below 70" in msg_lower or "low attendance" in msg_lower:
+            fallback_sql = "SELECT s.roll_no, s.name, s.prn_no, ROUND(CAST(AVG(al.presence_percentage) AS numeric), 2) as average_attendance FROM Students s JOIN AttendanceLog al ON s.prn_no = al.prn_no GROUP BY s.roll_no, s.name, s.prn_no HAVING AVG(al.presence_percentage) < 70.0 ORDER BY s.roll_no;"
+            context_msg = "students with attendance below 70%"
+        else:
+            fallback_sql = ""
+            
         fallback_results = []
         fallback_response = ""
         
-        if "absent" in msg_lower:
-            fallback_sql = "SELECT s.name, s.prn_no, s.roll_no FROM Students s LEFT JOIN AttendanceLog al ON s.prn_no = al.prn_no WHERE DATE(al.timestamp) = CURRENT_DATE AND al.status = 'absent';"
-            fallback_results = [{"name": "Vedant Bhosale", "prn_no": "72236938H", "roll_no": 102}]
-            fallback_response = "According to today's logs, student **Vedant Bhosale** (Roll No: 102, PRN: 72236938H) was marked **absent** today."
-        elif "present" in msg_lower:
-            fallback_sql = "SELECT s.name, s.prn_no FROM Students s JOIN AttendanceLog al ON s.prn_no = al.prn_no WHERE DATE(al.timestamp) = CURRENT_DATE AND al.status = 'present';"
-            fallback_results = []
-            fallback_response = "There are currently no students marked as present in any active or completed session today."
-        elif "all students" in msg_lower or "list students" in msg_lower or "registered" in msg_lower:
-            fallback_sql = "SELECT roll_no, name, prn_no, email FROM Students ORDER BY roll_no;"
-            fallback_results = [{"roll_no": 102, "name": "Vedant Bhosale", "prn_no": "72236938H", "email": "bhosalevedant2004@gmail.com"}]
-            fallback_response = "Here is the list of all registered students in the system:\n\n| Roll No | Name | PRN | Email |\n|---|---|---|---|\n| 102 | Vedant Bhosale | 72236938H | bhosalevedant2004@gmail.com |"
-        elif "below 70" in msg_lower or "low attendance" in msg_lower:
-            fallback_sql = "SELECT s.name, AVG(al.presence_percentage) as average FROM Students s JOIN AttendanceLog al ON s.prn_no = al.prn_no GROUP BY s.name HAVING AVG(al.presence_percentage) < 70.0;"
-            fallback_results = [{"name": "Vedant Bhosale", "average": 0.0}]
-            fallback_response = "Yes, student **Vedant Bhosale** has a cumulative average attendance of **0.0%**, which is below the 70.0% minimum threshold. A warning email has been flagged."
+        if fallback_sql:
+            try:
+                fallback_results = db.execute_read_query(fallback_sql)
+            except Exception as db_err:
+                print(f"[WARNING] Fallback SQL failed to execute: {db_err}")
+                
+            if fallback_results:
+                keys = fallback_results[0].keys()
+                header = "| " + " | ".join([k.replace("_", " ").title() for k in keys]) + " |"
+                separator = "| " + " | ".join(["---" for _ in keys]) + " |"
+                rows = []
+                for row in fallback_results:
+                    rows.append("| " + " | ".join([str(val) for val in row.values()]) + " |")
+                table_str = "\\n".join([header, separator] + rows)
+                fallback_response = f"I am operating in local mode. Here are the details for {context_msg}:\\n\\n{table_str}"
+            else:
+                fallback_response = f"I am operating in local mode. I couldn't find any records for {context_msg}."
         else:
             fallback_sql = "(None)"
-            fallback_results = []
-            fallback_response = f"*(Fallback Mode)*: I received your query: '{user_msg}'. To connect this to live database data, please configure a `GEMINI_API_KEY` or `OPENAI_API_KEY` in your `.env` file and restart the API server. In live mode, I will translate your English questions into SQL, run them, and display the results!"
+            fallback_response = f"*(Fallback Mode)*: I received your query: '{user_msg}'. To connect this to live database data dynamically, please configure an API key in your `.env` file. Currently, I can answer standard queries like 'show all students', 'who is absent', 'who is present', or 'low attendance'."
             
         return {
             "success": True,
